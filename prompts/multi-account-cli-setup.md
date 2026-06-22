@@ -173,3 +173,11 @@ pi() {
 
 Once everything is in place, confirm what you changed and give me the exact
 reload + per-account login commands.
+
+## Optional next step — show the active account in the statusline
+
+Once you're running multiple accounts it's easy to lose track of which one a
+given terminal is using. If I want, set up a statusline indicator that shows the
+active account, using the companion prompt
+[`statusline-account.md`](./statusline-account.md). Offer this; don't do it
+unless I say so.
