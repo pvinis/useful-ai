@@ -21,7 +21,7 @@ side by side in different terminals. Known tools:
 
 | Tool | Config-dir env var | Default directory | Notes |
 |------|--------------------|-------------------|-------|
-| Claude Code (`claude`) | `CLAUDE_CONFIG_DIR` | `~/.claude` | credentials may be in macOS Keychain or `.credentials.json` |
+| Claude Code (`claude`) | `CLAUDE_CONFIG_DIR` | `~/.claude` | also writes a sibling `~/.claude.json` outside the dir; credentials may be in macOS Keychain or `.credentials.json` |
 | OpenAI Codex (`codex`) | `CODEX_HOME` | `~/.codex` | login + config + sessions in `auth.json` / `config.toml` |
 | pi (`@earendil-works/pi-coding-agent`) | `PI_CODING_AGENT_DIR` | `~/.pi/agent` | login in `auth.json`; `~/.config/pi` (extensions/backups) is separate and stays shared |
 
@@ -55,6 +55,15 @@ Ask me, and wait for answers:
    - **Plain message:** prints a reminder and runs nothing.
 5. **Logins:** start each account with a **fresh login** (cleanest, default), or
    seed one account by copying an existing login so I skip one sign-in?
+6. **The default/legacy config dir** (`~/.claude`, `~/.codex`, `~/.pi/agent`).
+   Once every account has its own dir, the bare command no longer uses the
+   default. What should happen to it?
+   - **Leave it in place** (default): still reachable via `command <tool>`, a
+     handy fallback login.
+   - **Back it up**: rename the default config dir *and any sibling config file*
+     to `*.bak` so the default location starts clean (e.g. `~/.claude` ->
+     `~/.claude.bak` **and** `~/.claude.json` -> `~/.claude.json.bak`). Nothing
+     is deleted; restore by renaming back.
 
 ## Step 2 — check the environment
 
@@ -65,7 +74,8 @@ Ask me, and wait for answers:
   Python's pip, and `pp` / `pl` are often taken by system binaries — don't use
   them. Suggest collision-free alternatives.
 - Note whether the tool's default config dir already has a login (the "legacy"
-  account). Leave it untouched unless I ask otherwise.
+  account). Leave it untouched unless I ask otherwise (see requirement 6 if I
+  want it backed up instead).
 
 ## Step 3 — present the plan and get confirmation
 
@@ -75,17 +85,21 @@ directories you'll create. **Stop and wait for my explicit "yes" before editing.
 
 ## Step 4 — execute (only after I confirm)
 
-1. Create each account's config directory (e.g. `mkdir -p ~/.claude-personal`).
+1. If I chose to back up the default (requirement 6): rename the default config
+   dir and any sibling config file to `*.bak`. **Rename, never delete.** For
+   Claude Code that is **both** `~/.claude` and `~/.claude.json`. Confirm the
+   default location is clean before continuing.
+2. Create each account's config directory (e.g. `mkdir -p ~/.claude-personal`).
    Empty dir = fresh login on first launch. Do **not** copy credentials between
    accounts unless I chose to seed one.
-2. Edit the rc file. Use the reference implementation below, adapted to my shell.
-3. Syntax-check the rc file (`zsh -n ~/.zshrc`, `bash -n ~/.bashrc`, or
+3. Edit the rc file. Use the reference implementation below, adapted to my shell.
+4. Syntax-check the rc file (`zsh -n ~/.zshrc`, `bash -n ~/.bashrc`, or
    `fish --no-execute ~/.config/fish/config.fish`).
-4. If you can, verify the chooser actually captures a single keypress and
+5. If you can, verify the chooser actually captures a single keypress and
    dispatches correctly (e.g. a quick `pty` test in Python with stubbed
    commands) before declaring it done. A piped stdin will **not** exercise a
    single-keypress read — it needs a real terminal.
-5. Tell me to reload the shell (new terminal or re-source) and log into each
+6. Tell me to reload the shell (new terminal or re-source) and log into each
    account once.
 
 ## Reference implementation (zsh)
