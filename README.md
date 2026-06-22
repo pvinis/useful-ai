@@ -4,7 +4,7 @@ A small collection of reusable prompts you can hand to an AI coding agent
 (Claude Code, Codex, pi, Cursor, etc.) to have it do a useful piece of setup or
 work for you.
 
-Each file in [`prompts/`](./prompts) is self-contained: copy it, paste it into
+Each file in [`prompts/`](./prompts) is self-contained: just link it to your agent, or copy-paste it into
 your agent, and it will ask you the questions it needs, confirm a plan, and then
 execute.
 
