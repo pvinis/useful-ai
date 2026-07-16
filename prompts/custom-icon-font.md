@@ -32,7 +32,9 @@ preview; ask before installing the font or editing any config/plugin.
 1. **Icons**: [simple-icons](https://simpleicons.org/) has 3000+ brand SVGs
    (CC0), one path, 24×24 viewBox — perfect input. Fetch
    `https://cdn.jsdelivr.net/npm/simple-icons@latest/icons/<slug>.svg` for
-   each. Any other single-path SVG works too.
+   each. Any other single-path SVG works too. If a brand is missing
+   (trademark takedowns happen — OpenAI's mark, for one), try
+   `@lobehub/icons-static-svg` on npm, which covers AI brands well.
 2. **Base font**: one TTF face. If the font is installed as a `.ttc`
    collection, extract the face first (snippet below).
 3. **Codepoints**: pick a PUA block and treat it as append-only — never
