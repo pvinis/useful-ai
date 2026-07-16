@@ -23,6 +23,10 @@ the task matches.
 - [`prompts/mac-charging-wattage.md`](./prompts/mac-charging-wattage.md) —
   Report how many watts your Mac is charging at right now, using built-in macOS
   power tooling. Read-only.
+- [`prompts/custom-icon-font.md`](./prompts/custom-icon-font.md) —
+  Add your own icons to a font you already use — a mini nerd-font with only
+  the glyphs you need, at pinned codepoints — so they render inline in a
+  SwiftBar menu bar item, terminal, or anywhere else you can name a font.
 
 ## Skills
 
