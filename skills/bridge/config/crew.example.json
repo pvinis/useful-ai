@@ -1,0 +1,36 @@
+{
+  "roles": {
+    "navigator": { "harness": "claude", "model": "fable", "effort": "xhigh" },
+    "surveyor": { "harness": "codex", "model": "gpt-5.6-sol", "effort": "xhigh" },
+    "lookout": { "harness": "claude", "model": "sonnet", "effort": "low" }
+  },
+
+  "dispatch": {
+    "default": { "harness": "codex", "model": "gpt-5.6-terra", "effort": "high" },
+    "rules": [
+      {
+        "when": "Mobile or web UI implementation, visual design judgment, accessibility, animation, layout, visual verification, unusually ambiguous debugging, or a risky implementation.",
+        "use": { "harness": "claude", "model": "opus", "effort": "xhigh" },
+        "why": "Opus 5 is strongest on difficult multi-file work and finishes tasks rather than leaving stubs."
+      },
+      {
+        "when": "A narrow mechanical change: formatting, renaming, dependency metadata, straightforward docs, routine test maintenance.",
+        "use": { "harness": "codex", "model": "gpt-5.6-terra", "effort": "medium" },
+        "why": "Bounded, predictable work does not need a frontier model at high effort."
+      }
+    ]
+  },
+
+  "autonomy": {
+    "push": true,
+    "openDraftPr": true,
+    "merge": false
+  },
+
+  "_notes": {
+    "bosun": "Not listed under roles: the bosun is the session you are already in, and a skill cannot change its own model. Set it at launch instead, e.g. `claudel --model sonnet --effort medium`, Conductor's per-workspace model setting, or the `model` key in your config directory's settings.json. Sonnet 5 at medium effort is the recommended shape.",
+    "effort": "low | medium | high | xhigh | max. xhigh is the documented sweet spot for coding and agentic work; low is right for scouting and simple tasks. Effort defaults carried over from an older model are usually wrong.",
+    "models": "claude side accepts an alias (fable, opus, sonnet, haiku) or a full id (claude-opus-5). codex side takes a slug: gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna.",
+    "dispatch": "Rules are read top to bottom by the bosun when it picks a model for a hand; the first match wins, otherwise default. They are prose on purpose, so the bosun judges the fit."
+  }
+}

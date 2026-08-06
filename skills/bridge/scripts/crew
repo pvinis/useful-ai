@@ -1,0 +1,399 @@
+#!/usr/bin/env bash
+# crew — spawn and supervise bridge crew members.
+#
+# Subcommands:
+#   crew init                                    create ~/crew and a config from the example
+#   crew spawn --slug S --role R --task FILE     start a crew member, detached
+#   crew status [--slug S]                       one line per crew member
+#   crew answer --slug S --role R --text T       answer an ask.md and resume that member
+#   crew logs --slug S --role R [--tail N]       tail a member's log
+#   crew close --slug S                          remove worktrees, mark the slug closed
+#
+# State lives under $CREW_HOME (default ~/crew). Worktrees live beside the state,
+# outside the repository, so nothing is ever added to the repo being worked on.
+
+set -euo pipefail
+
+CREW_HOME="${CREW_HOME:-$HOME/crew}"
+CONFIG="$CREW_HOME/config.json"
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+die() { printf 'crew: %s\n' "$*" >&2; exit 1; }
+note() { printf 'crew: %s\n' "$*"; }
+
+# ---------------------------------------------------------------- repo identity
+
+resolve_repo() {
+  REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repository"
+  # Identify by the shared git dir so every worktree of one repo maps to one
+  # state directory (a Conductor workspace would otherwise look like its own repo).
+  local common
+  common="$(git rev-parse --git-common-dir)"
+  case "$common" in
+    /*) : ;;
+    *) common="$REPO/$common" ;;
+  esac
+  REPO_NAME="$(basename "$(dirname "$common")")"
+}
+
+default_branch() {
+  git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null \
+    | sed 's|^origin/||' \
+    || git rev-parse --abbrev-ref HEAD
+}
+
+# ---------------------------------------------------------------------- config
+
+require_config() {
+  [ -f "$CONFIG" ] || die "no config at $CONFIG (run: crew init)"
+  command -v jq >/dev/null || die "jq is required"
+}
+
+# role_field <role> <field> — role entry, else dispatch default, else empty
+role_field() {
+  jq -r --arg r "$1" --arg f "$2" \
+    '(.roles[$r][$f] // .dispatch.default[$f] // empty)' "$CONFIG"
+}
+
+autonomy_field() {
+  jq -r --arg f "$1" '(.autonomy[$f] // empty)' "$CONFIG"
+}
+
+# ------------------------------------------------------------------------ init
+
+cmd_init() {
+  mkdir -p "$CREW_HOME"
+  if [ -f "$CONFIG" ]; then
+    note "config already exists at $CONFIG"
+  else
+    cp "$SKILL_DIR/config/crew.example.json" "$CONFIG"
+    note "wrote $CONFIG"
+  fi
+}
+
+# ----------------------------------------------------------------------- spawn
+
+cmd_spawn() {
+  local slug="" role="" task_file="" harness="" model="" effort="" base="head" worktree=1
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --slug) slug="$2"; shift 2 ;;
+      --role) role="$2"; shift 2 ;;
+      --task) task_file="$2"; shift 2 ;;
+      --harness) harness="$2"; shift 2 ;;
+      --model) model="$2"; shift 2 ;;
+      --effort) effort="$2"; shift 2 ;;
+      --base) base="$2"; shift 2 ;;
+      --no-worktree) worktree=0; shift ;;
+      *) die "spawn: unknown flag $1" ;;
+    esac
+  done
+  [ -n "$slug" ] || die "spawn: --slug is required"
+  [ -n "$role" ] || die "spawn: --role is required"
+  [ -n "$task_file" ] || die "spawn: --task is required"
+  [ -f "$task_file" ] || die "spawn: no such task file: $task_file"
+
+  require_config
+  resolve_repo
+
+  harness="${harness:-$(role_field "$role" harness)}"
+  model="${model:-$(role_field "$role" model)}"
+  effort="${effort:-$(role_field "$role" effort)}"
+  [ -n "$harness" ] || die "spawn: no harness for role '$role' and no dispatch default"
+  [ -n "$model" ] || die "spawn: no model for role '$role' and no dispatch default"
+
+  local dir="$CREW_HOME/$REPO_NAME/$slug/$role"
+  [ -e "$dir/status" ] && [ "$(cat "$dir/status")" = "running" ] \
+    && die "spawn: $slug/$role is already running (crew status)"
+  mkdir -p "$dir"
+
+  # ---- worktree -------------------------------------------------------------
+  local workdir="$REPO"
+  if [ "$worktree" = 1 ]; then
+    workdir="$dir/wt"
+    if [ ! -d "$workdir" ]; then
+      local baseref branch
+      case "$base" in
+        fresh) baseref="origin/$(default_branch)" ;;
+        head)  baseref="HEAD" ;;
+        *)     baseref="$base" ;;
+      esac
+      branch="crew/$slug-$role"
+      git fetch --quiet origin 2>/dev/null || true
+      git worktree add --quiet -b "$branch" "$workdir" "$baseref" \
+        || die "spawn: git worktree add failed ($branch from $baseref)"
+      note "worktree $workdir on $branch from $baseref"
+      # Gitignored files the repo needs are not carried over by git. Copy the
+      # env family explicitly; this is what .worktreeinclude would have done.
+      local f
+      for f in "$REPO"/.env* "$REPO"/.envrc; do
+        [ -e "$f" ] && cp -R "$f" "$workdir/" 2>/dev/null || true
+      done
+    fi
+  fi
+
+  # ---- command --------------------------------------------------------------
+  local task session_id=""
+  task="$(cat "$task_file")"
+  # The task text is prose the model reads, so shell would never expand these.
+  # Substitute them here: a member is told real absolute paths, and the bosun
+  # writing the task file does not need to know the state layout.
+  task="${task//\$CREW_DIR/$dir}"
+  task="${task//\$CREW_WT/$workdir}"
+  local -a cmd
+  case "$harness" in
+    claude)
+      session_id="$(uuidgen | tr 'A-Z' 'a-z')"
+      cmd=(claude -p --model "$model" --session-id "$session_id"
+           --permission-mode acceptEdits)
+      [ -n "$effort" ] && cmd+=(--effort "$effort")
+      cmd+=("$task")
+      ;;
+    codex)
+      cmd=(codex exec -C "$workdir" -m "$model" --json
+           -o "$dir/result.md" --sandbox workspace-write)
+      [ -n "$effort" ] && cmd+=(-c "model_reasoning_effort=$effort")
+      cmd+=("$task")
+      ;;
+    *) die "spawn: unknown harness '$harness'" ;;
+  esac
+
+  # ---- meta + runner --------------------------------------------------------
+  jq -n --arg h "$harness" --arg m "$model" --arg e "$effort" --arg r "$role" \
+        --arg s "$slug" --arg w "$workdir" --arg sid "$session_id" \
+        --arg repo "$REPO_NAME" \
+     '{harness:$h, model:$m, effort:$e, role:$r, slug:$s, repo:$repo,
+       worktree:$w, session_id:$sid}' > "$dir/meta.json"
+
+  printf '%s\n' "$task" > "$dir/task.md"
+  : > "$dir/log"
+  write_runner "$dir" "$workdir" "$role" "${cmd[@]}"
+  launch "$dir"
+
+  note "spawned $slug/$role ($harness $model${effort:+ $effort}) pid $(cat "$dir/pid")"
+}
+
+# write_runner <dir> <workdir> <role> <cmd...>
+write_runner() {
+  local dir="$1" workdir="$2" role="$3"; shift 3
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'cd %q || exit 1\n' "$workdir"
+    printf 'export CREW_ROLE=%q CREW_DIR=%q\n' "$role" "$dir"
+    printf 'echo running > %q\n' "$dir/status"
+    # direnv is not loaded by non-interactive shells; wrap when available.
+    if command -v direnv >/dev/null; then
+      printf 'exec_prefix=(direnv exec %q)\n' "$workdir"
+    else
+      printf 'exec_prefix=()\n'
+    fi
+    printf '"${exec_prefix[@]}"'
+    local a; for a in "$@"; do printf ' %q' "$a"; done
+    printf ' < /dev/null\n'
+    printf 'rc=$?\n'
+    printf 'echo "$rc" > %q\n' "$dir/exit-code"
+    printf 'if [ "$rc" -eq 0 ]; then echo done > %q; else echo failed > %q; fi\n' \
+      "$dir/status" "$dir/status"
+  } > "$dir/run.sh"
+  chmod +x "$dir/run.sh"
+}
+
+launch() {
+  local dir="$1"
+  nohup bash "$dir/run.sh" >> "$dir/log" 2>&1 &
+  echo $! > "$dir/pid"
+  disown 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------- status
+
+effective_status() {
+  local dir="$1" s="unknown"
+  [ -f "$dir/status" ] && s="$(cat "$dir/status")"
+  # An unanswered ask.md outranks "running": the member is waiting on the captain.
+  if [ -f "$dir/ask.md" ]; then s="asking"; fi
+  # A "running" status with a dead pid means the process died without our trap.
+  if [ "$s" = "running" ] && [ -f "$dir/pid" ]; then
+    kill -0 "$(cat "$dir/pid")" 2>/dev/null || s="died"
+  fi
+  printf '%s' "$s"
+}
+
+cmd_status() {
+  local only_slug=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --slug) only_slug="$2"; shift 2 ;;
+      *) die "status: unknown flag $1" ;;
+    esac
+  done
+  # Deliberately does not require a repo: status is useful from anywhere, and
+  # showing every repo's crew at once answers "what is running" better.
+  local root="$CREW_HOME"
+  [ -d "$root" ] || { note "no state under $root"; return 0; }
+
+  printf '%-14s %-16s %-10s %-8s %-22s %s\n' REPO SLUG ROLE STATUS MODEL NOTE
+  local slugdir role dir found=0
+  for slugdir in "$root"/*/*; do
+    [ -d "$slugdir" ] || continue
+    local slug repo; slug="$(basename "$slugdir")"; repo="$(basename "$(dirname "$slugdir")")"
+    if [ -n "$only_slug" ] && [ "$slug" != "$only_slug" ]; then continue; fi
+    for dir in "$slugdir"/*; do
+      [ -d "$dir" ] && [ -f "$dir/meta.json" ] || continue
+      role="$(basename "$dir")"; found=1
+      local st mdl note_txt=""
+      st="$(effective_status "$dir")"
+      mdl="$(jq -r '[.harness,.model,.effort]|map(select(.!=null and .!=""))|join(" ")' "$dir/meta.json")"
+      case "$st" in
+        asking) note_txt="$(snippet "$dir/ask.md")" ;;
+        failed|died) note_txt="exit $(cat "$dir/exit-code" 2>/dev/null || echo '?'), see log" ;;
+        done) note_txt="$(snippet "$dir/result.md")" ;;
+      esac
+      printf '%-14s %-16s %-10s %-8s %-22s %s\n' "$repo" "$slug" "$role" "$st" "$mdl" "$note_txt"
+    done
+  done
+  [ "$found" = 1 ] || note "no crew members recorded${only_slug:+ for slug $only_slug}"
+}
+
+# snippet <file> — first 60 chars on one line, empty if the file is absent.
+# Guarded because `set -o pipefail` turns a missing-file `head` into a fatal error.
+snippet() {
+  [ -f "$1" ] || return 0
+  head -c 60 "$1" 2>/dev/null | tr '\n' ' ' || true
+}
+
+# ---------------------------------------------------------------------- answer
+
+cmd_answer() {
+  local slug="" role="" text="" file=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --slug) slug="$2"; shift 2 ;;
+      --role) role="$2"; shift 2 ;;
+      --text) text="$2"; shift 2 ;;
+      --file) file="$2"; shift 2 ;;
+      *) die "answer: unknown flag $1" ;;
+    esac
+  done
+  [ -n "$slug" ] && [ -n "$role" ] || die "answer: --slug and --role are required"
+  [ -n "$text" ] || [ -n "$file" ] || die "answer: --text or --file is required"
+  require_config
+  resolve_repo
+
+  local dir="$CREW_HOME/$REPO_NAME/$slug/$role"
+  [ -d "$dir" ] || die "answer: no such crew member: $slug/$role"
+  [ -n "$file" ] && text="$(cat "$file")"
+
+  printf '%s\n' "$text" > "$dir/answer.md"
+  # Archive the question so status stops reporting "asking".
+  if [ -f "$dir/ask.md" ]; then
+    local n=1
+    while [ -e "$dir/asked-$n.md" ]; do n=$((n+1)); done
+    mv "$dir/ask.md" "$dir/asked-$n.md"
+  fi
+
+  local harness model effort workdir session_id
+  harness="$(jq -r .harness "$dir/meta.json")"
+  model="$(jq -r .model "$dir/meta.json")"
+  effort="$(jq -r .effort "$dir/meta.json")"
+  workdir="$(jq -r .worktree "$dir/meta.json")"
+  session_id="$(jq -r .session_id "$dir/meta.json")"
+
+  local -a cmd
+  case "$harness" in
+    claude)
+      [ -n "$session_id" ] && [ "$session_id" != "null" ] \
+        || die "answer: no session id recorded for $slug/$role"
+      cmd=(claude -p --resume "$session_id" --permission-mode acceptEdits)
+      [ -n "$effort" ] && [ "$effort" != "null" ] && cmd+=(--effort "$effort")
+      cmd+=("$text")
+      ;;
+    codex)
+      local thread_id
+      # `|| true` so a log with no thread_id reaches the friendly error below
+      # instead of dying inside the pipeline under `set -o pipefail`.
+      thread_id="$(grep -o '"thread_id":"[^"]*"' "$dir/log" 2>/dev/null | head -1 | cut -d'"' -f4 || true)"
+      [ -n "$thread_id" ] || die "answer: no thread_id in $dir/log (respawn this member)"
+      cmd=(codex exec resume "$thread_id" -C "$workdir" -m "$model" --json
+           -o "$dir/result.md" --sandbox workspace-write)
+      [ -n "$effort" ] && [ "$effort" != "null" ] && cmd+=(-c "model_reasoning_effort=$effort")
+      cmd+=("$text")
+      ;;
+    *) die "answer: unknown harness '$harness'" ;;
+  esac
+
+  write_runner "$dir" "$workdir" "$role" "${cmd[@]}"
+  launch "$dir"
+  note "answered and resumed $slug/$role, pid $(cat "$dir/pid")"
+}
+
+# ------------------------------------------------------------------------ logs
+
+cmd_logs() {
+  local slug="" role="" n=40
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --slug) slug="$2"; shift 2 ;;
+      --role) role="$2"; shift 2 ;;
+      --tail) n="$2"; shift 2 ;;
+      *) die "logs: unknown flag $1" ;;
+    esac
+  done
+  [ -n "$slug" ] && [ -n "$role" ] || die "logs: --slug and --role are required"
+  resolve_repo
+  tail -n "$n" "$CREW_HOME/$REPO_NAME/$slug/$role/log"
+}
+
+# ----------------------------------------------------------------------- close
+
+cmd_close() {
+  local slug="" keep=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --slug) slug="$2"; shift 2 ;;
+      --keep-branches) keep=1; shift ;;
+      *) die "close: unknown flag $1" ;;
+    esac
+  done
+  [ -n "$slug" ] || die "close: --slug is required"
+  resolve_repo
+
+  local slugdir="$CREW_HOME/$REPO_NAME/$slug" dir st
+  [ -d "$slugdir" ] || die "close: no such slug: $slug"
+
+  for dir in "$slugdir"/*; do
+    [ -d "$dir" ] && [ -f "$dir/meta.json" ] || continue
+    st="$(effective_status "$dir")"
+    if [ "$st" = "running" ]; then
+      note "skipping $(basename "$dir"): still running (stop it first)"
+      continue
+    fi
+    if [ -d "$dir/wt" ]; then
+      git worktree remove --force "$dir/wt" 2>/dev/null \
+        || git worktree remove --force --force "$dir/wt" 2>/dev/null \
+        || note "could not remove worktree $dir/wt (remove by hand)"
+      rm -rf "$dir/wt"
+    fi
+    if [ "$keep" = 0 ]; then
+      local branch="crew/$slug-$(basename "$dir")"
+      git branch -q -D "$branch" 2>/dev/null || true
+    fi
+  done
+  git worktree prune
+  date -u +%Y-%m-%dT%H:%M:%SZ > "$slugdir/closed-at"
+  note "closed $slug (state kept at $slugdir)"
+}
+
+# ------------------------------------------------------------------------ main
+
+case "${1:-}" in
+  init)   shift; cmd_init "$@" ;;
+  spawn)  shift; cmd_spawn "$@" ;;
+  status) shift; cmd_status "$@" ;;
+  answer) shift; cmd_answer "$@" ;;
+  logs)   shift; cmd_logs "$@" ;;
+  close)  shift; cmd_close "$@" ;;
+  ""|-h|--help|help)
+    sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown subcommand '$1' (try: crew help)" ;;
+esac

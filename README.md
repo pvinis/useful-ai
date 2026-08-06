@@ -35,6 +35,12 @@ the task matches.
 
 ## Skills
 
+- [`skills/bridge/`](./skills/bridge) — Talk to one agent and ship with a crew.
+  The session you open becomes the **bosun**: it gathers the context for a piece
+  of work, puts a **navigator** on the plan and a **surveyor** on tearing it
+  apart, waits for your go-ahead, then runs **hands** in isolated git worktrees
+  and reports back with draft PRs. Roles, models, and effort levels are
+  configurable; works across Claude Code and Codex in one crew.
 - [`skills/model-doctor/`](./skills/model-doctor) — Audit the AI model
   references in a repo or config directory, check them against official
   provider docs, and propose upgrades. Read-only by default: it reports what's
