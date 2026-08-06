@@ -105,6 +105,27 @@ Verified on 2026-08-06 against claude 2.1.223 and codex-cli 0.146.0, in a scratc
 repository. Facts below marked *verified* were actually run; the rest come from
 `--help` and are flagged.
 
+### Two revisions made while building
+
+The design above was written before the script existed. Two things changed, both
+simplifications:
+
+1. **`crew spawn` creates worktrees itself with plain `git worktree add`, outside
+   the repository**, at `~/crew/<repo>/<slug>/<role>/wt`, on a branch
+   `crew/<slug>-<role>`. It does not use `claude -w`. This gives one mechanism for
+   both harnesses, adds nothing to the repo being worked on (no `.claude/worktrees`
+   to exclude, no chance of committing a worktree as an embedded repo), avoids
+   Claude Code's worktree locks entirely, and puts the worktree next to its own
+   state. The cost is that the `.worktreeinclude` copying has to be done by hand,
+   which the script does explicitly for the `.env*` and `.envrc` family.
+2. **`--bg` is not used.** The open question about whether it composes with `-p`
+   is now moot: the script runs `-p` under `nohup` with its own redirect, pid file,
+   and status file, because it needs exactly that for codex anyway. One code path
+   instead of two, and the open question disappears rather than getting answered.
+
+The rest of this section is the verified reference behind those choices, and still
+applies to anyone using `claude -w` directly.
+
 ### Claude-side hand
 
 `claude -p -w <slug>` works, and creates the worktree itself (*verified*):
@@ -180,15 +201,27 @@ codex exec -C <worktree> -m gpt-5.6-terra -c model_reasoning_effort=medium \
   notes.md          navigator's own scratch memory (see below)
   tasks/<n>.md      one task per hand
   <role>/
-    status          queued | running | asking | done | failed
-    meta            harness, model, effort, session or thread id, worktree, pid
+    wt/             that member's worktree, on branch crew/<slug>-<role>
+    status          running | asking | done | failed | died
+    meta.json       harness, model, effort, slug, repo, worktree, session id
     log             raw stdout/stderr
-    ask.md          present only when that crew member has a question
-    answer.md       written by the bosun when you answer
+    pid, exit-code  liveness and outcome
+    run.sh          the exact command that was launched, for debugging
+    task.md         what it was asked to do
+    ask.md          present only while a question is unanswered
+    asked-N.md      archived questions
+    answer.md       the captain's last answer
     result.md       final message
 ```
 
-`~/crew` is configurable, and `<slug>` is the ticket ID when there is one.
+`~/crew` is overridable with `CREW_HOME`, and `<slug>` is the ticket ID when there
+is one. The repo key comes from the shared git dir, so every worktree of one
+repository maps to a single state directory rather than one per Conductor
+workspace.
+
+`status` is a file, but `crew status` reports an *effective* status: an unanswered
+`ask.md` outranks `running`, and a `running` status whose pid is dead reports as
+`died` rather than lying.
 
 ## The relay
 
@@ -312,8 +345,75 @@ accounting beyond what the CLIs already report.
 
 ## Install
 
-Authored here, then linked the usual way: `~/.agents/skills/bridge` is an
-absolute symlink to this directory, and each config directory gets a relative
-symlink to it (`~/.claude/skills/`, `~/.claude-leanscaper/skills/`,
-`~/.codex/skills/`, `~/.codex-leanscaper/skills/`). Version independent, so it
-cannot rot when a tool version moves.
+### 1. Link the skill
+
+Canonical location is `~/.agents/skills/<name>`, an absolute symlink to the repo
+directory, then a relative symlink from each config directory. Version
+independent, so it cannot rot when a tool version moves.
+
+```sh
+ln -sfn ~/useful-ai/skills/bridge ~/.agents/skills/bridge
+for d in ~/.claude ~/.claude-leanscaper ~/.codex ~/.codex-leanscaper; do
+  [ -d "$d" ] && mkdir -p "$d/skills" && ln -sfn ../../.agents/skills/bridge "$d/skills/bridge"
+done
+```
+
+### 2. Create the config
+
+```sh
+~/.agents/skills/bridge/scripts/crew init     # writes ~/crew/config.json
+```
+
+Optionally put `crew` on PATH so the bosun does not have to use an absolute path:
+
+```sh
+ln -sfn ~/.agents/skills/bridge/scripts/crew ~/.local/bin/crew
+```
+
+### 3. Always starting on the bridge
+
+A `SessionStart` hook injects the bosun nudge. **Add to the existing
+`SessionStart` array, do not replace it**, since both config directories already
+have hooks registered.
+
+Claude, in `~/.claude-leanscaper/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          { "type": "command",
+            "command": "/Users/pavlos/.agents/skills/bridge/hooks/bosun-nudge.sh",
+            "timeout": 10 }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Use an absolute path, not `~`. Codex is the same shape in
+`~/.codex-leanscaper/hooks.json` under a `SessionStart` key; codex additionally
+tracks a `trusted_hash` per hook in `config.toml`, so the first run after adding
+it will ask you to trust the hook once.
+
+Two escape hatches are built into the nudge: it exits immediately when
+`CREW_ROLE` is set (which is how spawned crew members avoid recursively becoming
+bosuns) and when `CREW_NO_NUDGE=1` is exported (for a session that should just be
+a normal session).
+
+### 4. The bosun's own model
+
+A skill cannot change the model of the session running it, so this is a
+launch-time choice:
+
+- Per session: `claudel --model sonnet --effort medium`
+- Per Conductor workspace: the workspace's model setting
+- As the default for every session: the `model` key in the config directory's
+  `settings.json`
+
+The third one changes every session, not just bridge sessions. Worth knowing
+before setting it, since the current default in this config is Fable.
