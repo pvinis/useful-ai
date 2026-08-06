@@ -1,0 +1,4 @@
+interface:
+  display_name: "Model Doctor"
+  short_description: "Audit model IDs and propose safe, approved upgrades"
+  default_prompt: "Use $model-doctor to check whether the model references in this repo are still current."
