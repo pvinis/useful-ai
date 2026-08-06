@@ -30,6 +30,10 @@ the task matches.
 
 ## Skills
 
+- [`skills/model-doctor/`](./skills/model-doctor) — Audit the AI model
+  references in a repo or config directory, check them against official
+  provider docs, and propose upgrades. Read-only by default: it reports what's
+  outdated or deprecated and edits only what you explicitly approve.
 - [`skills/trim-ios-simulator/`](./skills/trim-ios-simulator) — Clean up an iOS
   Simulator's home screen by uninstalling the apps you don't need, keeping only
   the ones relevant to your work. macOS + Xcode.
