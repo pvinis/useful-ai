@@ -27,9 +27,24 @@ the task matches.
   Add your own icons to a font you already use — a mini nerd-font with only
   the glyphs you need, at pinned codepoints — so they render inline in a
   SwiftBar menu bar item, terminal, or anywhere else you can name a font.
+- [`prompts/sims-loading-verbs.md`](./prompts/sims-loading-verbs.md) —
+  Replace your CLI's spinner words with the loading-screen messages from the
+  old Maxis sims, so a long tool call reads `Reticulating Splines…` or
+  `Calculating Llama Expectoration Trajectory…`. Native setting in Claude Code,
+  a hook in Codex.
 
 ## Skills
 
 - [`skills/trim-ios-simulator/`](./skills/trim-ios-simulator) — Clean up an iOS
   Simulator's home screen by uninstalling the apps you don't need, keeping only
   the ones relevant to your work. macOS + Xcode.
+
+## Data
+
+Data files the prompts pull from, usable on their own. See
+[`data/README.md`](./data/README.md).
+
+- [`data/sims-loading-messages.txt`](./data/sims-loading-messages.txt) — 595
+  loading-screen messages from The Sims through The Sims 3, plus SimCity 4. Flat
+  list, one per line, and the same set grouped by game in
+  [`.json`](./data/sims-loading-messages.json).
