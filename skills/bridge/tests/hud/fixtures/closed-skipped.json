@@ -1,0 +1,28 @@
+{
+  "v": 1,
+  "generated_at": "2026-08-07T09:12:03Z",
+  "bar": { "asking": 0, "running": 1, "bad": 0, "done": 0 },
+  "slugs": [
+    { "repo": "useful-ai", "slug": "crew-hud",
+      "phase": "work",
+      "closed": false,
+      "attention": false,
+      "members": [
+        { "role": "hand-1",
+          "status": "running",
+          "glyph": "▶",
+          "label": "hand-1 — 3m",
+          "harness": "claude", "model": "opus", "effort": "xhigh",
+          "since_s": 180, "quiet_s": 20, "stale": false,
+          "doing": "Read SPEC.md",
+          "transcript": "ok",
+          "commits": null,
+          "ask": null,
+          "result_snippet": null,
+          "exit_code": null,
+          "pid_alive": true,
+          "paths": { "dir": "/Users/pavlos/crew/useful-ai/crew-hud/hand-1",
+                     "wt": "/Users/pavlos/crew/useful-ai/crew-hud/hand-1/wt",
+                     "log": "/Users/pavlos/crew/useful-ai/crew-hud/hand-1/log" } } ] }
+  ]
+}

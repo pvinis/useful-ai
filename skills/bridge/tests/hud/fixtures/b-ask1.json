@@ -1,0 +1,13 @@
+{
+  "v": 1, "generated_at": "2026-08-07T09:01:00Z",
+  "bar": { "asking": 1, "running": 0, "bad": 0, "done": 0 },
+  "slugs": [
+    { "repo": "useful-ai", "slug": "crew-hud", "phase": "work", "closed": false, "attention": true,
+      "members": [
+        { "role": "hand-1", "status": "asking", "glyph": "❓",
+          "label": "hand-1 — asking 1m · \"Ship it as v1 | or wait;\"",
+          "stale": false,
+          "ask": { "snippet": "Ship it as v1 | or wait;", "mtime": 1000 },
+          "paths": { "dir": "/Users/pavlos/crew/useful-ai/crew-hud/hand-1" } } ] }
+  ]
+}
