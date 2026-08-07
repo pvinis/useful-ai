@@ -1,0 +1,20 @@
+{
+  "v": 1, "generated_at": "2026-08-07T08:00:00Z",
+  "bar": { "asking": 0, "running": 5, "bad": 0, "done": 0 },
+  "slugs": [
+    { "repo": "mobile-app4", "slug": "LS-6648", "phase": "work", "closed": false, "attention": false,
+      "members": [
+        { "role": "hand-1", "status": "running", "glyph": "▶", "label": "hand-1 — 5m", "stale": false, "ask": null,
+          "paths": { "dir": "/Users/pavlos/crew/mobile-app4/LS-6648/hand-1" } },
+        { "role": "hand-2", "status": "running", "glyph": "▶", "label": "hand-2 — 5m", "stale": false, "ask": null,
+          "paths": { "dir": "/Users/pavlos/crew/mobile-app4/LS-6648/hand-2" } },
+        { "role": "hand-3", "status": "running", "glyph": "▶", "label": "hand-3 — 5m", "stale": false, "ask": null,
+          "paths": { "dir": "/Users/pavlos/crew/mobile-app4/LS-6648/hand-3" } } ] },
+    { "repo": "useful-ai", "slug": "crew-hud", "phase": "work", "closed": false, "attention": false,
+      "members": [
+        { "role": "hand-1", "status": "running", "glyph": "▶", "label": "hand-1 — 5m", "stale": false, "ask": null,
+          "paths": { "dir": "/Users/pavlos/crew/useful-ai/crew-hud/hand-1" } },
+        { "role": "hand-2", "status": "running", "glyph": "▶", "label": "hand-2 — 5m", "stale": false, "ask": null,
+          "paths": { "dir": "/Users/pavlos/crew/useful-ai/crew-hud/hand-2" } } ] }
+  ]
+}
