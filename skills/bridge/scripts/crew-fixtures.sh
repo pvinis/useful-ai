@@ -158,6 +158,15 @@ meta "$d" claude sonnet "$src" aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa ""
 echo done > "$d/status"; echo 0 > "$d/exit-code"
 printf 'Three call sites, all in src/upload.\n' > "$d/log"
 
+# a done claude member whose log ends mid-multibyte-character: the snippet must
+# step back to the last whole line rather than emit half a codepoint
+d="$(mk demo torn-log hand-1)"
+meta "$d" claude opus "" bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb ""
+echo done > "$d/status"; echo 0 > "$d/exit-code"
+{ printf 'tool output nobody wants to read\n'
+  printf 'Σύνοψη: όλα καλά — παραδόθηκε.\n'
+  printf 'ημιτελ\316'; } > "$d/log"
+
 printf 'fixtures in %s\n\n' "$scratch"
 
 # ------------------------------- 1. default `crew status` is byte-identical
@@ -260,8 +269,15 @@ assert "a claude member with no transcript says so instead of looking calm" \
                                       and .[0].doing == null and .[0].stale == false'
 assert "--no-worktree member is never probed" \
   "$member"' [m("lookout";"lookout")] | .[0].commits == null'
-assert "a done claude member falls back to its log" \
-  "$member"' [m("lookout";"lookout")] | .[0].result_snippet | test("call sites")'
+assert "a done claude member falls back to its log, whole line and no ellipsis" \
+  "$member"' [m("lookout";"lookout")]
+             | .[0].result_snippet == "Three call sites, all in src/upload."'
+assert "a log torn mid-character steps back to the last whole line" \
+  "$member"' [m("torn-log";"hand-1")]
+             | .[0].result_snippet == "Σύνοψη: όλα καλά — παραδόθηκε."'
+assert "no replacement character reaches the document" \
+  '[.slugs[].members[] | .label, .result_snippet, .doing]
+   | map(select(. != null)) | all(test("�") | not)'
 assert "dead pid reads as died" \
   "$member"' [m("dead-pid";"hand-1")] | .[0].status == "died" and .[0].glyph == "✗"'
 assert "empty status reads as unknown" \
@@ -277,7 +293,7 @@ assert "the ask carries its mtime, the bell's question key" \
 assert "one slug in two repos renders as two adjacent blocks" \
   '[.slugs[] | select(.slug == "normal") | .repo] == ["demo", "demo2"]'
 assert "bar counts only what is rendered, and never the broken member" \
-  '.bar == {asking: 1, running: 3, bad: 2, done: 4}'
+  '.bar == {asking: 1, running: 3, bad: 2, done: 5}'
 assert "phase is derived where the convention files exist, null where not" \
   '([.slugs[] | select(.slug == "normal" and .repo == "demo") | .phase] == ["work"])
    and ([.slugs[] | select(.slug == "ask") | .phase] == ["intake"])

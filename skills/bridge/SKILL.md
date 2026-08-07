@@ -128,6 +128,7 @@ session intact.
 ```sh
 crew init                                        # once, creates ~/crew/config.json
 crew spawn --slug S --role R --task FILE         # [--harness --model --effort --base --no-worktree]
+crew spawn ... --grant PATH                      # also let that member write PATH, repeatable
 crew status [--slug S]                           # one line per member
 crew answer --slug S --role R --text T           # answer an ask and resume
 crew logs --slug S --role R [--tail N]           # raw log
