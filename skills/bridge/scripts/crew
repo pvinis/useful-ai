@@ -5,6 +5,7 @@
 #   crew init                                    create ~/crew and a config from the example
 #   crew spawn --slug S --role R --task FILE     start a crew member, detached
 #   crew status [--slug S]                       one line per crew member
+#   crew status --json [--slug S]                the same state as a JSON document
 #   crew answer --slug S --role R --text T       answer an ask.md and resume that member
 #   crew logs --slug S --role R [--tail N]       tail a member's log
 #   crew close --slug S                          remove worktrees, mark the slug closed
@@ -75,6 +76,7 @@ cmd_init() {
 
 cmd_spawn() {
   local slug="" role="" task_file="" harness="" model="" effort="" base="head" worktree=1
+  local grants=""   # newline-separated --grant paths, in order
   while [ $# -gt 0 ]; do
     case "$1" in
       --slug) slug="$2"; shift 2 ;;
@@ -84,6 +86,7 @@ cmd_spawn() {
       --model) model="$2"; shift 2 ;;
       --effort) effort="$2"; shift 2 ;;
       --base) base="$2"; shift 2 ;;
+      --grant) grants="$grants$2"$'\n'; shift 2 ;;
       --no-worktree) worktree=0; shift ;;
       *) die "spawn: unknown flag $1" ;;
     esac
@@ -102,17 +105,18 @@ cmd_spawn() {
   [ -n "$harness" ] || die "spawn: no harness for role '$role' and no dispatch default"
   [ -n "$model" ] || die "spawn: no model for role '$role' and no dispatch default"
 
-  local dir="$CREW_HOME/$REPO_NAME/$slug/$role"
+  local slugdir="$CREW_HOME/$REPO_NAME/$slug"
+  local dir="$slugdir/$role"
   [ -e "$dir/status" ] && [ "$(cat "$dir/status")" = "running" ] \
     && die "spawn: $slug/$role is already running (crew status)"
   mkdir -p "$dir"
 
   # ---- worktree -------------------------------------------------------------
-  local workdir="$REPO"
+  local workdir="$REPO" baseref=""
   if [ "$worktree" = 1 ]; then
     workdir="$dir/wt"
     if [ ! -d "$workdir" ]; then
-      local baseref branch
+      local branch
       case "$base" in
         fresh) baseref="origin/$(default_branch)" ;;
         head)  baseref="HEAD" ;;
@@ -133,7 +137,10 @@ cmd_spawn() {
   fi
 
   # ---- command --------------------------------------------------------------
-  local task session_id=""
+  local task session_id="" config_dir="" base_sha="" g
+  # The sha, not the ref: recording "HEAD" would give `crew status --json` a
+  # moving target to count commits against.
+  if [ -n "$baseref" ]; then base_sha="$(git rev-parse "$baseref" 2>/dev/null || true)"; fi
   task="$(cat "$task_file")"
   # The task text is prose the model reads, so shell would never expand these.
   # Substitute them here: a member is told real absolute paths, and the bosun
@@ -144,14 +151,27 @@ cmd_spawn() {
   case "$harness" in
     claude)
       session_id="$(uuidgen | tr 'A-Z' 'a-z')"
-      cmd=(claude -p --model "$model" --session-id "$session_id"
-           --permission-mode acceptEdits)
+      config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+      # Without the slug directory in the allowed working directories a member
+      # cannot write its own ask.md, which is the whole relay. --add-dir is
+      # variadic, so it comes first and --model closes the list.
+      cmd=(claude -p --add-dir "$slugdir")
+      while IFS= read -r g; do
+        if [ -n "$g" ]; then cmd+=("$g"); fi
+      done <<<"$grants"
+      cmd+=(--model "$model" --session-id "$session_id" --permission-mode acceptEdits)
       [ -n "$effort" ] && cmd+=(--effort "$effort")
       cmd+=("$task")
       ;;
     codex)
+      config_dir="${CODEX_HOME:-$HOME/.codex}"
+      # Reads are already unrestricted under workspace-write; only writes
+      # outside the worktree need granting.
+      local roots
+      roots="$(path_array "$slugdir"$'\n'"$grants")"
       cmd=(codex exec -C "$workdir" -m "$model" --json
-           -o "$dir/result.md" --sandbox workspace-write)
+           -o "$dir/result.md" --sandbox workspace-write
+           -c "sandbox_workspace_write.writable_roots=$roots")
       [ -n "$effort" ] && cmd+=(-c "model_reasoning_effort=$effort")
       cmd+=("$task")
       ;;
@@ -159,11 +179,19 @@ cmd_spawn() {
   esac
 
   # ---- meta + runner --------------------------------------------------------
+  local spawned_at grants_json
+  spawned_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  grants_json="$(path_array "$grants")"
+  # Written whole and moved into place: `crew status --json` reads this file
+  # while members are being spawned and must never see half of it.
   jq -n --arg h "$harness" --arg m "$model" --arg e "$effort" --arg r "$role" \
         --arg s "$slug" --arg w "$workdir" --arg sid "$session_id" \
-        --arg repo "$REPO_NAME" \
+        --arg repo "$REPO_NAME" --arg at "$spawned_at" --arg base "$base_sha" \
+        --arg cfg "$config_dir" --argjson grants "$grants_json" \
      '{harness:$h, model:$m, effort:$e, role:$r, slug:$s, repo:$repo,
-       worktree:$w, session_id:$sid}' > "$dir/meta.json"
+       worktree:$w, session_id:$sid, spawned_at:$at, base:$base,
+       config_dir:$cfg, grants:$grants}' > "$dir/meta.json.tmp"
+  mv "$dir/meta.json.tmp" "$dir/meta.json"
 
   printf '%s\n' "$task" > "$dir/task.md"
   : > "$dir/log"
@@ -171,6 +199,11 @@ cmd_spawn() {
   launch "$dir"
 
   note "spawned $slug/$role ($harness $model${effort:+ $effort}) pid $(cat "$dir/pid")"
+}
+
+# path_array <newline-separated paths> — the same as a JSON array, blanks dropped.
+path_array() {
+  printf '%s' "$1" | jq -Rsc 'split("\n") | map(select(. != ""))'
 }
 
 # write_runner <dir> <workdir> <role> <cmd...>
@@ -262,6 +295,351 @@ snippet() {
   head -c 60 "$1" 2>/dev/null | tr '\n' ' ' || true
 }
 
+# ----------------------------------------------------------------- status json
+
+# The HUD collector. It shares effective_status with cmd_status and nothing
+# else: the table above is a human artifact whose bytes must not move.
+#
+# Nothing in here may be fatal. The script runs under `set -euo pipefail`, so an
+# unguarded probe takes the whole document down — and `crew close` removes a
+# worktree while meta.json still records its path, so a git probe against a
+# closed voyage is the normal case, not the exceptional one. Every external
+# command is guarded and every assignment is split from its declaration.
+
+QUIET_WARN_S=600   # a running member quieter than this is flagged stale
+
+# mtime_of <path> — epoch mtime, empty when absent or unreadable.
+mtime_of() {
+  [ -e "$1" ] || return 0
+  stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || true
+}
+
+# iso_epoch <iso-8601-utc> — epoch seconds, empty when unparseable. BSD date
+# first, GNU second; neither is fatal.
+iso_epoch() {
+  date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null \
+    || date -u -d "$1" +%s 2>/dev/null \
+    || true
+}
+
+# transcript_path <config_dir> <session_id> — newest transcript for a session,
+# empty when none is visible. A caller sandboxed away from the config directory
+# sees nothing here, which the document reports rather than hides.
+transcript_path() {
+  local cfg="$1" sid="$2" newest="" f reset
+  [ -n "$sid" ] || return 0
+  # `shopt -p` exits non-zero when the option is off, which is the usual case.
+  reset="$(shopt -p nullglob || true)"
+  shopt -s nullglob
+  if [ -n "$cfg" ]; then
+    for f in "$cfg"/projects/*/"$sid".jsonl; do
+      if [ -z "$newest" ] || [ "$f" -nt "$newest" ]; then newest="$f"; fi
+    done
+  else
+    for f in "$HOME"/.claude*/projects/*/"$sid".jsonl; do
+      if [ -z "$newest" ] || [ "$f" -nt "$newest" ]; then newest="$f"; fi
+    done
+  fi
+  eval "$reset"
+  printf '%s' "$newest"
+}
+
+# claude_doing <transcript> — the last tool use in a claude transcript. Reads
+# the tail only; `fromjson?` drops the partial first line and any partial last.
+claude_doing() {
+  tail -c 262144 "$1" 2>/dev/null | jq -rR '
+    fromjson? | objects | .message? | objects | .content? | arrays | .[]
+    | select(.type? == "tool_use")
+    | ((.input? | objects) // {}) as $i
+    | (.name? // "tool")
+      + ((($i.file_path? // $i.command? // $i.pattern? // $i.path? // $i.url? // "") | tostring)
+         | if . == "" then "" else " " + . end)
+  ' 2>/dev/null | tail -1 || true
+}
+
+# codex_doing <log> — the last item event in a codex --json stream.
+codex_doing() {
+  tail -c 262144 "$1" 2>/dev/null | jq -rR '
+    fromjson? | objects
+    | select(((.type? // "") | tostring) | startswith("item."))
+    | ((.item? | objects) // {}) as $it
+    | (($it.type? // "item") | tostring)
+      + ((($it.command? // $it.path? // $it.title? // "") | tostring)
+         | if . == "" then "" else " " + . end)
+  ' 2>/dev/null | tail -1 || true
+}
+
+# slug_phase <slugdir> — best-effort phase from the slug's files. Those are a
+# bosun convention, not written by this script, so absence means "unknown" and
+# the document says null rather than guessing.
+slug_phase() {
+  if   [ -d "$1/tasks" ];     then printf 'work'
+  elif [ -f "$1/survey.md" ]; then printf 'gate'
+  elif [ -f "$1/course.md" ]; then printf 'course'
+  elif [ -f "$1/brief.md" ];  then printf 'intake'
+  fi
+}
+
+# member_json <dir> <repo> <slug> <phase> <closed> <now> — one member, wrapped
+# with its slug's fields so the whole document can be grouped in one jq pass.
+member_json() {
+  local dir="$1" repo="$2" slug="$3" phase="$4" closed="$5" now="$6"
+  local role; role="$(basename "$dir")"
+
+  # Joined on \001, not a tab: bash treats tab as IFS whitespace and collapses a
+  # run of them, so one empty field (a codex member has no session_id) would
+  # shift every field after it. Control characters are stripped from the values
+  # first, so the delimiter cannot occur inside one.
+  local meta="" meta_ok=0
+  meta="$(jq -r '[.harness, .model, .effort, .session_id, .worktree,
+                  .spawned_at, .base, .config_dir]
+                 | map(. // "" | tostring | gsub("[[:cntrl:]]"; " "))
+                 | join("\u0001")' "$dir/meta.json" 2>/dev/null)" && meta_ok=1 || true
+  if [ "$meta_ok" = 0 ]; then
+    jq -n --arg repo "$repo" --arg slug "$slug" --arg phase "$phase" \
+          --argjson closed "$closed" --arg role "$role" --arg dir "$dir" '
+      {repo: $repo, slug: $slug, phase: (if $phase == "" then null else $phase end),
+       closed: $closed,
+       member: {role: $role, status: "unknown", glyph: "‼", label: "broken meta.json",
+                harness: null, model: null, effort: null, since_s: null, quiet_s: null,
+                stale: false, doing: null, transcript: "n/a", commits: null, ask: null,
+                result_snippet: null, exit_code: null, pid_alive: false,
+                paths: {dir: $dir, wt: null, log: ($dir + "/log")}}}'
+    return 0
+  fi
+  local harness="" model="" effort="" session_id="" wt="" spawned_at="" base="" config_dir=""
+  IFS=$'\001' read -r harness model effort session_id wt spawned_at base config_dir <<<"$meta" || true
+
+  # effective_status cats files this process may not be able to read; a guarded
+  # call keeps one bad member from taking the document down.
+  local st=""
+  st="$(effective_status "$dir" 2>/dev/null || true)"
+  [ -n "$st" ] || st="unknown"
+  local terminal=0
+  case "$st" in done|failed|died) terminal=1 ;; esac
+
+  local pid="" pid_alive=false
+  if [ -f "$dir/pid" ]; then
+    pid="$(cat "$dir/pid" 2>/dev/null || true)"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then pid_alive=true; fi
+  fi
+
+  local exit_code="null" ec=""
+  if [ -f "$dir/exit-code" ]; then
+    ec="$(cat "$dir/exit-code" 2>/dev/null || true)"
+    case "$ec" in ''|*[!0-9]*) : ;; *) exit_code="$ec" ;; esac
+  fi
+
+  local since="null" epoch=""
+  if [ -n "$spawned_at" ]; then epoch="$(iso_epoch "$spawned_at")"; fi
+  if [ -z "$epoch" ]; then epoch="$(mtime_of "$dir/status")"; fi
+  case "$epoch" in ''|*[!0-9]*) : ;; *) since=$(( now - epoch )) ;; esac
+
+  # The transcript walk is the one expensive probe, so it runs for non-terminal
+  # members only: history costs a couple of stats forever.
+  local doing="" tstate="n/a" quiet="null" tfile="" tepoch="" aepoch=""
+  if [ "$terminal" = 0 ]; then
+    case "$harness" in
+      claude)
+        if [ -n "$session_id" ]; then
+          tfile="$(transcript_path "$config_dir" "$session_id")"
+          if [ -z "$tfile" ]; then
+            tstate="absent"
+          elif [ ! -r "$tfile" ]; then
+            tstate="unreadable"
+          else
+            tepoch="$(mtime_of "$tfile")"
+            aepoch="$(mtime_of "$dir/answer.md")"
+            # A resumed session that forked leaves the old transcript frozen.
+            # Say so instead of reporting a tool call from before the answer.
+            if [ "$st" = running ] && [ -n "$aepoch" ] && [ -n "$tepoch" ] \
+               && [ "$tepoch" -lt "$aepoch" ]; then
+              tstate="stale"
+            else
+              tstate="ok"
+              doing="$(claude_doing "$tfile")"
+            fi
+          fi
+        fi
+        ;;
+      codex)
+        if [ -f "$dir/log" ]; then
+          tepoch="$(mtime_of "$dir/log")"
+          doing="$(codex_doing "$dir/log")"
+        fi
+        ;;
+    esac
+    case "$tepoch" in ''|*[!0-9]*) : ;; *) quiet=$(( now - tepoch )) ;; esac
+  fi
+
+  local stale=false
+  if [ "$st" = running ] && [ "$quiet" != null ] && [ "$quiet" -gt "$QUIET_WARN_S" ]; then
+    stale=true
+  fi
+
+  local ask_txt="" ask_mtime="null" am=""
+  if [ -f "$dir/ask.md" ]; then
+    ask_txt="$(head -c 400 "$dir/ask.md" 2>/dev/null || true)"
+    am="$(mtime_of "$dir/ask.md")"
+    case "$am" in ''|*[!0-9]*) : ;; *) ask_mtime="$am" ;; esac
+  fi
+
+  # A done claude member writes its final message to the log, not result.md.
+  local result_txt=""
+  if [ -f "$dir/result.md" ]; then
+    result_txt="$(head -c 400 "$dir/result.md" 2>/dev/null || true)"
+  elif [ "$st" = done ] && [ "$harness" = claude ]; then
+    result_txt="$(tail -c 400 "$dir/log" 2>/dev/null || true)"
+  fi
+
+  # git only for a member with its own worktree still on disk. Everything past
+  # that guard is a probe against a directory `crew close` may have gutted.
+  local has_wt=false count="null" clast="" cage="null" cdirty="null"
+  if [ -n "$wt" ] && [ "$wt" = "$dir/wt" ] && [ -d "$wt" ]; then
+    has_wt=true
+    local range="" n="" defb="" tip="" porcelain=""
+    if [ -n "$base" ]; then
+      range="$base..HEAD"
+    else
+      defb="$(git -C "$wt" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+      if [ -n "$defb" ]; then range="$defb..HEAD"; fi
+    fi
+    if [ -n "$range" ]; then
+      n="$(git -C "$wt" rev-list --count "$range" 2>/dev/null || true)"
+      case "$n" in ''|*[!0-9]*) : ;; *) count="$n" ;; esac
+    fi
+    if [ "$count" != null ] && [ "$count" != 0 ]; then
+      tip="$(git -C "$wt" log -1 --format='%ct%x09%s' "$range" 2>/dev/null || true)"
+      if [ -n "$tip" ]; then
+        local cts="${tip%%$'\t'*}"
+        clast="${tip#*$'\t'}"
+        case "$cts" in ''|*[!0-9]*) : ;; *) cage=$(( now - cts )) ;; esac
+      fi
+    fi
+    porcelain="$(git -C "$wt" status --porcelain 2>/dev/null || true)"
+    # grep -c exits 1 on no match, having already printed the 0.
+    cdirty="$(printf '%s' "$porcelain" | grep -c . || true)"
+    case "$cdirty" in ''|*[!0-9]*) cdirty=0 ;; esac
+  fi
+
+  # Presentation policy — glyph table, duration humanizer, label layout — lives
+  # here once so every renderer shares it.
+  jq -n --arg repo "$repo" --arg slug "$slug" --arg phase "$phase" \
+        --argjson closed "$closed" \
+        --arg role "$role" --arg st "$st" --arg harness "$harness" \
+        --arg model "$model" --arg effort "$effort" --arg doing "$doing" \
+        --arg transcript "$tstate" --arg ask "$ask_txt" --arg result "$result_txt" \
+        --arg last "$clast" --arg dir "$dir" --arg wt "$wt" \
+        --argjson since "$since" --argjson quiet "$quiet" --argjson stale "$stale" \
+        --argjson ask_mtime "$ask_mtime" --argjson has_wt "$has_wt" \
+        --argjson count "$count" --argjson age "$cage" --argjson dirty "$cdirty" \
+        --argjson exit_code "$exit_code" --argjson pid_alive "$pid_alive" '
+    def nz: if . == "" then null else . end;
+    def clean($n): (. // "") | gsub("[[:cntrl:]]"; " ") | gsub(" +"; " ")
+                   | sub("^ "; "") | sub(" $"; "") | .[0:$n];
+    def dur: if . == null then ""
+             elif . < 60 then "\(.)s"
+             elif . < 3600 then "\((. / 60) | floor)m"
+             elif . < 86400 then "\((. / 3600) | floor)h"
+             else "\((. / 86400) | floor)d" end;
+    def glyph: {asking: "❓", running: "▶", died: "✗", failed: "✗", done: "✓"}[.] // "…";
+
+    ($doing | clean(80)) as $d
+    | ($ask | clean(80)) as $a
+    | ($result | clean(80)) as $r
+    | ($last | clean(60)) as $l
+    | ([$role + (if $since == null then "" else " — " + ($since | dur) end)]
+       + (if ($count // 0) > 0
+          then ["\($count) commit" + (if $count == 1 then "" else "s" end)] else [] end)
+       + (if ($count // 0) > 0 and $l != ""
+          then ["\"\($l)\"" + (if $age == null then "" else " " + ($age | dur) + " ago" end)]
+          else [] end)
+       + (if $st == "asking" and $a != "" then [$a]
+          elif $st == "done" and $r != "" then [$r]
+          elif $st == "died" or $st == "failed" then ["\($st), see log"]
+          elif $st == "running" and ($count // 0) == 0 and $d != "" then [$d]
+          else [] end)
+       | join(" · ")) as $label
+    | {repo: $repo, slug: $slug, phase: ($phase | nz), closed: $closed,
+       member: {
+         role: $role,
+         status: $st,
+         glyph: ($st | glyph),
+         label: ($label | clean(200)),
+         harness: ($harness | nz), model: ($model | nz), effort: ($effort | nz),
+         since_s: $since,
+         quiet_s: $quiet,
+         stale: $stale,
+         doing: ($d | nz),
+         transcript: $transcript,
+         commits: (if $has_wt
+                   then {count: $count, last: ($l | nz), age_s: $age, dirty: $dirty}
+                   else null end),
+         ask: (if $ask_mtime == null then null else {snippet: $a, mtime: $ask_mtime} end),
+         result_snippet: ($r | nz),
+         exit_code: $exit_code,
+         pid_alive: $pid_alive,
+         paths: {dir: $dir, wt: ($wt | nz), log: ($dir + "/log")}}}'
+}
+
+cmd_status_json() {
+  local only_slug=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --slug) only_slug="$2"; shift 2 ;;
+      *) die "status --json: unknown flag $1" ;;
+    esac
+  done
+
+  local now generated_at
+  now="$(date -u +%s)"
+  generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  # No state at all is not an error, it is an empty document.
+  local members="" slugdir dir obj
+  if [ -d "$CREW_HOME" ]; then
+    for slugdir in "$CREW_HOME"/*/*; do
+      [ -d "$slugdir" ] || continue
+      local slug repo phase closed
+      slug="$(basename "$slugdir")"; repo="$(basename "$(dirname "$slugdir")")"
+      if [ -n "$only_slug" ] && [ "$slug" != "$only_slug" ]; then continue; fi
+      phase="$(slug_phase "$slugdir")"
+      closed=false
+      [ -f "$slugdir/closed-at" ] && closed=true
+      for dir in "$slugdir"/*; do
+        [ -d "$dir" ] && [ -f "$dir/meta.json" ] || continue
+        obj="$(member_json "$dir" "$repo" "$slug" "$phase" "$closed" "$now" || true)"
+        if [ -n "$obj" ]; then members="$members$obj"$'\n'; fi
+      done
+    done
+  fi
+
+  # group_by sorts by (slug, repo), which is the adjacency one ticket in two
+  # clone directories needs. bar counts only what survives the closed filter.
+  printf '%s' "$members" | jq -s --arg gen "$generated_at" '
+    def terminal: . == "done" or . == "failed" or . == "died";
+
+    (group_by([.slug, .repo])
+     | map((map(.member)) as $ms
+           | {repo: .[0].repo, slug: .[0].slug, phase: .[0].phase, closed: .[0].closed,
+              attention: (any($ms[]; .status == "asking" or .status == "died"
+                                     or .status == "failed")
+                          or (.[0].closed and any($ms[]; .status | terminal | not))),
+              members: $ms})
+     | map(select((.closed | not) or any(.members[]; .status | terminal | not)))
+    ) as $slugs
+    | {v: 1,
+       generated_at: $gen,
+       bar: (reduce ($slugs[].members[]) as $m
+               ({asking: 0, running: 0, bad: 0, done: 0};
+                if $m.status == "asking" then .asking += 1
+                elif $m.status == "running" then .running += 1
+                elif $m.status == "died" or $m.status == "failed" then .bad += 1
+                elif $m.status == "done" then .done += 1
+                else . end)),
+       slugs: $slugs}'
+}
+
 # ---------------------------------------------------------------------- answer
 
 cmd_answer() {
@@ -280,7 +658,8 @@ cmd_answer() {
   require_config
   resolve_repo
 
-  local dir="$CREW_HOME/$REPO_NAME/$slug/$role"
+  local slugdir="$CREW_HOME/$REPO_NAME/$slug"
+  local dir="$slugdir/$role"
   [ -d "$dir" ] || die "answer: no such crew member: $slug/$role"
   [ -n "$file" ] && text="$(cat "$file")"
 
@@ -292,19 +671,27 @@ cmd_answer() {
     mv "$dir/ask.md" "$dir/asked-$n.md"
   fi
 
-  local harness model effort workdir session_id
+  local harness model effort workdir session_id grants g
   harness="$(jq -r .harness "$dir/meta.json")"
   model="$(jq -r .model "$dir/meta.json")"
   effort="$(jq -r .effort "$dir/meta.json")"
   workdir="$(jq -r .worktree "$dir/meta.json")"
   session_id="$(jq -r .session_id "$dir/meta.json")"
+  grants="$(jq -r '(.grants // [])[]' "$dir/meta.json")"
 
+  # Resume rebuilds the command from scratch, so the spawn's access grants have
+  # to be rebuilt with it or the member comes back sandboxed out of its own
+  # state directory.
   local -a cmd
   case "$harness" in
     claude)
       [ -n "$session_id" ] && [ "$session_id" != "null" ] \
         || die "answer: no session id recorded for $slug/$role"
-      cmd=(claude -p --resume "$session_id" --permission-mode acceptEdits)
+      cmd=(claude -p --add-dir "$slugdir")
+      while IFS= read -r g; do
+        if [ -n "$g" ]; then cmd+=("$g"); fi
+      done <<<"$grants"
+      cmd+=(--resume "$session_id" --permission-mode acceptEdits)
       [ -n "$effort" ] && [ "$effort" != "null" ] && cmd+=(--effort "$effort")
       cmd+=("$text")
       ;;
@@ -314,8 +701,11 @@ cmd_answer() {
       # instead of dying inside the pipeline under `set -o pipefail`.
       thread_id="$(grep -o '"thread_id":"[^"]*"' "$dir/log" 2>/dev/null | head -1 | cut -d'"' -f4 || true)"
       [ -n "$thread_id" ] || die "answer: no thread_id in $dir/log (respawn this member)"
+      local roots
+      roots="$(path_array "$slugdir"$'\n'"$grants")"
       cmd=(codex exec resume "$thread_id" -C "$workdir" -m "$model" --json
-           -o "$dir/result.md" --sandbox workspace-write)
+           -o "$dir/result.md" --sandbox workspace-write
+           -c "sandbox_workspace_write.writable_roots=$roots")
       [ -n "$effort" ] && [ "$effort" != "null" ] && cmd+=(-c "model_reasoning_effort=$effort")
       cmd+=("$text")
       ;;
@@ -358,7 +748,7 @@ cmd_close() {
   [ -n "$slug" ] || die "close: --slug is required"
   resolve_repo
 
-  local slugdir="$CREW_HOME/$REPO_NAME/$slug" dir st
+  local slugdir="$CREW_HOME/$REPO_NAME/$slug" dir st skipped=0
   [ -d "$slugdir" ] || die "close: no such slug: $slug"
 
   for dir in "$slugdir"/*; do
@@ -366,6 +756,7 @@ cmd_close() {
     st="$(effective_status "$dir")"
     if [ "$st" = "running" ]; then
       note "skipping $(basename "$dir"): still running (stop it first)"
+      skipped=1
       continue
     fi
     if [ -d "$dir/wt" ]; then
@@ -380,7 +771,8 @@ cmd_close() {
     fi
   done
   git worktree prune
-  date -u +%Y-%m-%dT%H:%M:%SZ > "$slugdir/closed-at"
+  # A slug with a member still running is not closed, and must not claim to be.
+  if [ "$skipped" = 0 ]; then date -u +%Y-%m-%dT%H:%M:%SZ > "$slugdir/closed-at"; fi
   note "closed $slug (state kept at $slugdir)"
 }
 
@@ -389,11 +781,13 @@ cmd_close() {
 case "${1:-}" in
   init)   shift; cmd_init "$@" ;;
   spawn)  shift; cmd_spawn "$@" ;;
-  status) shift; cmd_status "$@" ;;
+  status) shift
+    case "${1:-}" in --json) shift; cmd_status_json "$@" ;; *) cmd_status "$@" ;; esac ;;
   answer) shift; cmd_answer "$@" ;;
   logs)   shift; cmd_logs "$@" ;;
   close)  shift; cmd_close "$@" ;;
   ""|-h|--help|help)
-    sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+    # 2,15 is the doc block at the top of this file; move the end with it.
+    sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown subcommand '$1' (try: crew help)" ;;
 esac
