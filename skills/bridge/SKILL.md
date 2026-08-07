@@ -130,10 +130,18 @@ crew init                                        # once, creates ~/crew/config.j
 crew spawn --slug S --role R --task FILE         # [--harness --model --effort --base --no-worktree]
 crew spawn ... --grant PATH                      # also let that member write PATH, repeatable
 crew status [--slug S]                           # one line per member
+crew status --json                               # the same state as one JSON document
 crew answer --slug S --role R --text T           # answer an ask and resume
 crew logs --slug S --role R [--tail N]           # raw log
 crew close --slug S                              # remove worktrees and crew branches
 ```
+
+The captain may have the HUD installed, a SwiftBar plugin that renders
+`crew status --json` in their menu bar and notifies them when a member asks a
+question or reaches a terminal state. Do not assume it: it is an opt-in install
+described in [`README.md`](README.md), and a captain running without it learns
+nothing you have not told them. Either way it does not replace reporting. It
+shows state, never why the state matters.
 
 `crew` lives in this skill's `scripts/` directory. Call it by absolute path if it
 is not on PATH.
