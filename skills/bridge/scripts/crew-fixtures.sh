@@ -299,5 +299,34 @@ assert "phase is derived where the convention files exist, null where not" \
    and ([.slugs[] | select(.slug == "ask") | .phase] == ["intake"])
    and ([.slugs[] | select(.slug == "races") | .phase] == [null])'
 
+# ------------------------------------------- 4. role names fall back by prefix
+
+# role_field is config-level rather than document-level, and there is no
+# subcommand that resolves a role without spawning it, so the function is lifted
+# out of the script rather than given a CLI surface it does not otherwise need.
+printf '\nrole defaults resolve through -suffixed names\n'
+role_home="$(mktemp -d)"
+cat > "$role_home/config.json" <<'JSON'
+{ "roles": { "lookout":   { "harness": "claude", "model": "sonnet", "effort": "low" },
+             "surveyor":  { "harness": "codex",  "model": "sol",    "effort": "xhigh" } },
+  "dispatch": { "default": { "harness": "codex", "model": "terra",  "effort": "high" } } }
+JSON
+# shellcheck disable=SC1090  # sourcing one extracted function is the point
+source /dev/stdin <<<"$(sed -n '/^role_field()/,/^}/p' "$crew")"
+CONFIG="$role_home/config.json"
+
+role_is() {  # role_is <role> <field> <expected>
+  local got; got="$(role_field "$2" "$3")"
+  if [ "$got" = "$4" ]; then ok "$1"; else bad "$1 (got '$got', wanted '$4')"; fi
+}
+
+role_is "an exact role name keeps its own default"        lookout         model sonnet
+role_is "a -suffixed role inherits its prefix's default"  lookout-styling model sonnet
+role_is "so does a numbered one"                          surveyor-2      model sol
+role_is "every field falls back, not just the first"      lookout-nav     effort low
+role_is "a name with no defined prefix hits the default"  hand-1          model terra
+role_is "and so does an unknown role"                     nonsense        model terra
+rm -rf "$role_home"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

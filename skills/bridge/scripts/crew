@@ -50,10 +50,22 @@ require_config() {
   command -v jq >/dev/null || die "jq is required"
 }
 
-# role_field <role> <field> — role entry, else dispatch default, else empty
+# role_field <role> <field> — role entry, else dispatch default, else empty.
+# Roles are named per member, so `lookout-styling` and `hand-1` are ordinary
+# names; each falls back to its longest `-`-separated prefix that the config
+# actually defines. Without this a suffixed role silently misses its own
+# defaults and runs as dispatch.default, which is a cost surprise, not an error.
 role_field() {
-  jq -r --arg r "$1" --arg f "$2" \
-    '(.roles[$r][$f] // .dispatch.default[$f] // empty)' "$CONFIG"
+  local role="$1" field="$2" value
+  while :; do
+    value="$(jq -r --arg r "$role" --arg f "$field" '(.roles[$r][$f] // empty)' "$CONFIG")"
+    if [ -n "$value" ]; then printf '%s' "$value"; return 0; fi
+    case "$role" in
+      *-*) role="${role%-*}" ;;
+      *) break ;;
+    esac
+  done
+  jq -r --arg f "$field" '(.dispatch.default[$f] // empty)' "$CONFIG"
 }
 
 autonomy_field() {
