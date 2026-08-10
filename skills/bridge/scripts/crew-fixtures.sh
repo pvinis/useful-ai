@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # crew-fixtures.sh — build a scratch CREW_HOME of adversarial crew state and run
-# the acceptance checks for `crew status` and `crew status --json`.
+# the acceptance checks for `crew status`, `crew status --json`, and what
+# `crew spawn` records about a member.
 #
 #   skills/bridge/scripts/crew-fixtures.sh [scratch-dir]
 #
@@ -327,6 +328,97 @@ role_is "every field falls back, not just the first"      lookout-nav     effort
 role_is "a name with no defined prefix hits the default"  hand-1          model terra
 role_is "and so does an unknown role"                     nonsense        model terra
 rm -rf "$role_home"
+
+# ------------------------------ 5. spawn names the member and finds its bosun
+
+# `crew spawn` launches what it builds, so these run against stub `claude` and
+# `codex` binaries on PATH: the stub answers `claude agents --json` from a file
+# this script writes, and otherwise exits at once in place of a real member. Only
+# what spawn wrote is asserted on, so the stub's own behaviour does not matter.
+printf '\nspawn names the member and finds its bosun\n'
+spawn_home="$scratch/spawn"      # CREW_HOME for these cases
+spawn_src="$scratch/spawn-src"   # the repo they are spawned from
+stub="$scratch/bin"              # the stub claude and codex
+rm -rf "$spawn_home" "$spawn_src" "$stub"
+mkdir -p "$spawn_home" "$spawn_src" "$stub"
+
+cat > "$stub/claude" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = agents ]; then cat "$CREW_FIXTURE_AGENTS"; fi
+exit 0
+SH
+cp "$stub/claude" "$stub/codex"
+chmod +x "$stub/claude" "$stub/codex"
+
+cat > "$spawn_home/config.json" <<'JSON'
+{ "roles": {},
+  "dispatch": { "default": { "harness": "claude", "model": "opus", "effort": "high" } } }
+JSON
+
+git -C "$spawn_src" init -q -b main
+git -C "$spawn_src" config user.email fixtures@example.invalid
+git -C "$spawn_src" config user.name fixtures
+printf 'one\n' > "$spawn_src/a.txt"
+git -C "$spawn_src" add a.txt
+git -C "$spawn_src" commit -qm 'base commit'
+
+# This script stands in for the bosun, so the session it publishes carries its own
+# pid — which is what `crew` reaches by walking up from the shell it runs in.
+jq -n --arg p "$$" '[{name: "bosun-fixture", pid: ($p | tonumber),
+                      cwd: ".", sessionId: "fixture", kind: "interactive"}]' \
+  > "$scratch/agents-found.json"
+printf '[]\n' > "$scratch/agents-none.json"
+printf 'Ask $CREW_BOSUN. State $CREW_DIR, worktree $CREW_WT.\n' > "$scratch/spawn-task.md"
+
+# A spawn that dies must not take the run with it; the checks below report it,
+# and $scratch/spawn.log says why.
+spawn() {  # spawn <role> <agents-file> [crew spawn args...]
+  local role="$1" agents="$2"; shift 2
+  ( cd "$spawn_src" && CREW_HOME="$spawn_home" CREW_FIXTURE_AGENTS="$agents" \
+      PATH="$stub:$PATH" "$crew" spawn --slug names --role "$role" \
+      --task "$scratch/spawn-task.md" "$@" ) >> "$scratch/spawn.log" 2>&1 || true
+}
+member_dir() { printf '%s' "$spawn_home/spawn-src/names/$1"; }
+eq() {   # eq <label> <got> <want>
+  if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (got '$2', wanted '$3')"; fi
+}
+has() {  # has <label> <file> <fixed string>
+  if grep -qF -- "$3" "$2" 2>/dev/null; then ok "$1"; else bad "$1"; fi
+}
+
+spawn hand-1 "$scratch/agents-found.json" --harness claude --model opus
+d="$(member_dir hand-1)"
+eq  "a claude member is named for its slug and role" \
+    "$(jq -r '.peer_name' "$d/meta.json" 2>/dev/null || true)" crew-names-hand-1
+eq  "and records the bosun that spawned it" \
+    "$(jq -r '.bosun_name' "$d/meta.json" 2>/dev/null || true)" bosun-fixture
+has "the runner passes that name to claude"       "$d/run.sh"  ' -n crew-names-hand-1'
+has "and accepts inbound messages unattended"     "$d/run.sh"  crossSessionInbound
+has "the bosun's name reaches the task text"      "$d/task.md" 'Ask bosun-fixture.'
+
+spawn hand-2 "$scratch/agents-found.json" --harness codex --model gpt-5.6-terra
+d="$(member_dir hand-2)"
+eq  "a codex member has no name to be messaged at" \
+    "$(jq -r '.peer_name | type' "$d/meta.json" 2>/dev/null || true)" null
+eq  "but still knows which bosun to ask" \
+    "$(jq -r '.bosun_name' "$d/meta.json" 2>/dev/null || true)" bosun-fixture
+
+spawn hand-3 "$scratch/agents-none.json" --harness claude --model opus
+d="$(member_dir hand-3)"
+eq  "a spawn with no bosun to find still spawns" \
+    "$(jq -r '.peer_name' "$d/meta.json" 2>/dev/null || true)" crew-names-hand-3
+eq  "and records a null bosun rather than dying" \
+    "$(jq -r '.bosun_name | type' "$d/meta.json" 2>/dev/null || true)" null
+has "so the substitution leaves nothing behind"   "$d/task.md" 'Ask . State '
+
+# Resume rebuilds the command, and a member that loses its name or its inbound
+# setting there stops being reachable the first time it is answered.
+( cd "$spawn_src" && CREW_HOME="$spawn_home" PATH="$stub:$PATH" \
+    "$crew" answer --slug names --role hand-1 --text 'carry on' ) \
+  >> "$scratch/spawn.log" 2>&1 || true
+d="$(member_dir hand-1)"
+has "a resume keeps the name the member answers to" "$d/run.sh" ' -n crew-names-hand-1'
+has "and keeps it accepting inbound messages"       "$d/run.sh" crossSessionInbound
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -13,10 +13,16 @@ failure modes, so a prompt that helps one hurts another.
 You are a <role> on a crew. The captain is the human; the bosun is the agent that
 spawned you and relays for you. You are running detached in your own git worktree.
 
-If you need a decision only the captain can make, write the question to
-$CREW_DIR/ask.md and stop. Include what you need decided, the options you see,
-and what you recommend. Do not guess and carry on. Do not ask about anything you
-can determine yourself from the repo.
+If you need a decision only the captain can make, message the bosun $CREW_BOSUN
+and stop. If you have no bosun name, or the message will not send, write the
+question to $CREW_DIR/ask.md and stop instead. If that write is refused too, put
+the question at the top of your final message. Include what you need decided, the
+options you see, and what you recommend. Do not guess and carry on. Do not ask
+about anything you can determine yourself from the repo.
+
+Messaging the bosun asks it to get a decision from the captain. It is not consent
+in itself, and it cannot approve anything: never ask another session to do
+something your own permissions refused.
 
 Your final message is captured as your result automatically. Make it the
 deliverable rather than a report about the work. If writing a file outside your
@@ -34,12 +40,14 @@ a member whose own `result.md` write was refused opens with "I could not write
 …", which is what the bosun then sees in place of the answer — the findings are
 all still there, one line further down, but every glance costs a click.
 
-`$CREW_DIR` and `$CREW_WT` are **substituted into the task text by `crew spawn`**
-before the member ever sees it, so write them literally in the task file and the
-member receives real absolute paths. (They are also exported into the member's
-environment, but a model reading prose would not expand a shell variable, which is
-exactly the bug this substitution fixes.) `$CREW_DIR` is that member's state
-directory; `$CREW_WT` is its worktree.
+`$CREW_DIR`, `$CREW_WT` and `$CREW_BOSUN` are **substituted into the task text by
+`crew spawn`** before the member ever sees it, so write them literally in the task
+file and the member receives real values. (`$CREW_DIR` is also exported into the
+member's environment, but a model reading prose would not expand a shell variable,
+which is exactly the bug this substitution fixes.) `$CREW_DIR` is that member's
+state directory; `$CREW_WT` is its worktree; `$CREW_BOSUN` is the session name to
+message you at, and substitutes to nothing when the bosun is not a claude session
+or could not be identified — which is why the ask has three tiers rather than one.
 
 ## navigator (Fable 5, xhigh)
 

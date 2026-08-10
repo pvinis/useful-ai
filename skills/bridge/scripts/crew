@@ -149,21 +149,24 @@ cmd_spawn() {
   fi
 
   # ---- command --------------------------------------------------------------
-  local task session_id="" config_dir="" base_sha="" g
+  local task session_id="" config_dir="" base_sha="" peer_name="" bosun_name="" g
   # The sha, not the ref: recording "HEAD" would give `crew status --json` a
   # moving target to count commits against.
   if [ -n "$baseref" ]; then base_sha="$(git rev-parse "$baseref" 2>/dev/null || true)"; fi
+  bosun_name="$(discover_bosun)"
   task="$(cat "$task_file")"
   # The task text is prose the model reads, so shell would never expand these.
   # Substitute them here: a member is told real absolute paths, and the bosun
   # writing the task file does not need to know the state layout.
   task="${task//\$CREW_DIR/$dir}"
   task="${task//\$CREW_WT/$workdir}"
+  task="${task//\$CREW_BOSUN/$bosun_name}"
   local -a cmd
   case "$harness" in
     claude)
       session_id="$(uuidgen | tr 'A-Z' 'a-z')"
       config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+      peer_name="crew-$slug-$role"
       # Without the slug directory in the allowed working directories a member
       # cannot write its own ask.md, which is the whole relay. --add-dir is
       # variadic, so it comes first and --model closes the list.
@@ -171,7 +174,13 @@ cmd_spawn() {
       while IFS= read -r g; do
         if [ -n "$g" ]; then cmd+=("$g"); fi
       done <<<"$grants"
-      cmd+=(--model "$model" --session-id "$session_id" --permission-mode acceptEdits)
+      # -n is what makes the member addressable; unset, every member spawned in a
+      # worktree under ~/crew gets a near-identical derived name. And a -p session
+      # cannot show the inbound approval dialog, so a message to a member that did
+      # not accept up front is held forever rather than refused.
+      cmd+=(--model "$model" --session-id "$session_id" -n "$peer_name"
+            --permission-mode acceptEdits
+            --settings '{"crossSessionInbound":"accept"}')
       [ -n "$effort" ] && cmd+=(--effort "$effort")
       cmd+=("$task")
       ;;
@@ -200,9 +209,12 @@ cmd_spawn() {
         --arg s "$slug" --arg w "$workdir" --arg sid "$session_id" \
         --arg repo "$REPO_NAME" --arg at "$spawned_at" --arg base "$base_sha" \
         --arg cfg "$config_dir" --argjson grants "$grants_json" \
+        --arg pn "$peer_name" --arg bn "$bosun_name" \
      '{harness:$h, model:$m, effort:$e, role:$r, slug:$s, repo:$repo,
        worktree:$w, session_id:$sid, spawned_at:$at, base:$base,
-       config_dir:$cfg, grants:$grants}' > "$dir/meta.json.tmp"
+       config_dir:$cfg, grants:$grants,
+       peer_name:(if $pn == "" then null else $pn end),
+       bosun_name:(if $bn == "" then null else $bn end)}' > "$dir/meta.json.tmp"
   mv "$dir/meta.json.tmp" "$dir/meta.json"
 
   printf '%s\n' "$task" > "$dir/task.md"
@@ -216,6 +228,29 @@ cmd_spawn() {
 # path_array <newline-separated paths> — the same as a JSON array, blanks dropped.
 path_array() {
   printf '%s' "$1" | jq -Rsc 'split("\n") | map(select(. != ""))'
+}
+
+# discover_bosun — the name of the nearest claude session in this process's
+# ancestry, empty when there is none. `crew spawn` runs as a child of the bosun's
+# own session, so walking up from here reaches it. Nothing about it is fatal: a
+# codex bosun, or a spawn run straight from a terminal, has no match at all, and
+# the file-based ask still works for that member.
+#
+# CLAUDE_CODE_MESSAGING_SOCKET would be the short route and is documented as
+# exported into Bash commands, but it was unset in a bosun's own shell here.
+discover_bosun() {
+  local agents pid name
+  agents="$(claude agents --json 2>/dev/null || true)"
+  [ -n "$agents" ] || return 0
+  pid="$$"
+  while :; do
+    case "$pid" in ''|0|1|*[!0-9]*) return 0 ;; esac
+    name="$(printf '%s' "$agents" | jq -r --arg p "$pid" \
+      'first(.. | objects | select((.pid? | tostring) == $p) | .name?) // empty' \
+      2>/dev/null || true)"
+    if [ -n "$name" ]; then printf '%s' "$name"; return 0; fi
+    pid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+  done
 }
 
 # write_runner <dir> <workdir> <role> <cmd...>
@@ -704,17 +739,20 @@ cmd_answer() {
     mv "$dir/ask.md" "$dir/asked-$n.md"
   fi
 
-  local harness model effort workdir session_id grants g
+  local harness model effort workdir session_id grants peer_name g
   harness="$(jq -r .harness "$dir/meta.json")"
   model="$(jq -r .model "$dir/meta.json")"
   effort="$(jq -r .effort "$dir/meta.json")"
   workdir="$(jq -r .worktree "$dir/meta.json")"
   session_id="$(jq -r .session_id "$dir/meta.json")"
   grants="$(jq -r '(.grants // [])[]' "$dir/meta.json")"
+  peer_name="$(jq -r '(.peer_name // "")' "$dir/meta.json")"
 
   # Resume rebuilds the command from scratch, so the spawn's access grants have
   # to be rebuilt with it or the member comes back sandboxed out of its own
-  # state directory.
+  # state directory. The same goes for the name it answers to and for accepting
+  # inbound messages: dropped here, a member stops being reachable the moment it
+  # is answered once.
   local -a cmd
   case "$harness" in
     claude)
@@ -724,7 +762,9 @@ cmd_answer() {
       while IFS= read -r g; do
         if [ -n "$g" ]; then cmd+=("$g"); fi
       done <<<"$grants"
-      cmd+=(--resume "$session_id" --permission-mode acceptEdits)
+      cmd+=(--resume "$session_id" --permission-mode acceptEdits
+            --settings '{"crossSessionInbound":"accept"}')
+      [ -n "$peer_name" ] && cmd+=(-n "$peer_name")
       [ -n "$effort" ] && [ "$effort" != "null" ] && cmd+=(--effort "$effort")
       cmd+=("$text")
       ;;
