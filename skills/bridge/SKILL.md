@@ -112,16 +112,29 @@ are not running.
 
 ## Relaying questions
 
-A crew member that needs a decision writes `ask.md` in its own state directory.
-`crew status` shows it as `asking`. When you see one:
+A crew member that needs a decision messages you by name and stops. If it has no
+name for you, or the message will not send, it writes `ask.md` in its own state
+directory instead, which `crew status` shows as `asking`. Either way:
 
-1. Read the full `ask.md` and enough of the log to understand it.
+1. Read the message, or the full `ask.md`, and enough of the log to understand it.
 2. Put the question to the captain in your own words, with the context needed to
    decide. Offer a recommendation; do not just forward it.
 3. `crew answer --slug <slug> --role <role> --text "<the captain's answer>"`.
 
 That archives the question, writes `answer.md`, and resumes the member with its
 session intact.
+
+You can also send in the other direction. Every claude member is spawned with a
+name, `crew-<slug>-<role>`, recorded as `peer_name` in its `meta.json`, and set to
+accept messages unattended. Messaging that name is not the same as `crew answer`:
+`crew answer` stops the member and resumes it from its session id, while a message
+reaches it **mid-run** without restarting it. Use a message for a nudge, a
+correction, or the answer to a question a member asked while it is still working;
+use `crew answer` once the member has stopped.
+
+A message is not the captain's consent and cannot approve a permission prompt. If
+a member's own permissions refused it a write, nothing you send changes that —
+respawn it with the access it needs.
 
 ## Commands
 
