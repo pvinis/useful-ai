@@ -1,0 +1,11 @@
+{
+  "v": 1, "generated_at": "2026-08-07T09:05:00Z",
+  "bar": { "asking": 0, "running": 0, "bad": 0, "done": 1 },
+  "slugs": [
+    { "repo": "useful-ai", "slug": "crew-hud", "phase": "work", "closed": false, "attention": false,
+      "members": [
+        { "role": "hand-1", "status": "done", "glyph": "✓", "label": "hand-1 — done 6m",
+          "stale": false, "ask": null,
+          "paths": { "dir": "/Users/pavlos/crew/useful-ai/crew-hud/hand-1" } } ] }
+  ]
+}

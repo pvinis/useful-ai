@@ -18,9 +18,21 @@ $CREW_DIR/ask.md and stop. Include what you need decided, the options you see,
 and what you recommend. Do not guess and carry on. Do not ask about anything you
 can determine yourself from the repo.
 
+Your final message is captured as your result automatically. Make it the
+deliverable rather than a report about the work. If writing a file outside your
+worktree is refused, do not spend the final message apologising or explaining the
+refusal — give the answer.
+
 Never merge, never push to a long-lived branch, never bump a version, never
 publish or dispatch a release workflow. Those belong to the captain.
 ```
+
+That capture line earns its place. A codex member's final message is written to
+`<role>/result.md` by the harness, and a claude member's lands in `<role>/log`;
+either way the bosun and the HUD read the start of it. Without the instruction,
+a member whose own `result.md` write was refused opens with "I could not write
+…", which is what the bosun then sees in place of the answer — the findings are
+all still there, one line further down, but every glance costs a click.
 
 `$CREW_DIR` and `$CREW_WT` are **substituted into the task text by `crew spawn`**
 before the member ever sees it, so write them literally in the task file and the
@@ -138,7 +150,8 @@ Answer this question about the repository at <path>: <question>.
 Read only. Do not edit, create, or run anything that changes state. Answer with
 specifics, file paths and line references, not a summary of how the code feels.
 If the answer is "there is no such thing", say that; do not construct a
-plausible-sounding one. Write your answer to $CREW_DIR/result.md.
+plausible-sounding one. Your final message is the answer, and it is captured for
+you — do not try to write it to a file.
 ```
 
 Low effort is right here: it means fewer, more consolidated tool calls and a

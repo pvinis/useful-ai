@@ -1,0 +1,17 @@
+{
+  "v": 1, "generated_at": "2026-08-07T09:10:00Z",
+  "bar": { "asking": 0, "running": 0, "bad": 1, "done": 2 },
+  "slugs": [
+    { "repo": "useful-ai", "slug": "crew-hud", "phase": "work", "closed": false, "attention": false,
+      "members": [
+        { "role": "hand-1", "status": "done", "glyph": "✓", "label": "hand-1 — done 3d",
+          "stale": false, "ask": null,
+          "paths": { "dir": "/Users/pavlos/crew/useful-ai/crew-hud/hand-1" } },
+        { "role": "hand-2", "status": "done", "glyph": "✓", "label": "hand-2 — done 3d",
+          "stale": false, "ask": null,
+          "paths": { "dir": "/Users/pavlos/crew/useful-ai/crew-hud/hand-2" } },
+        { "role": "surveyor", "status": "died", "glyph": "✗", "label": "surveyor — died 3d",
+          "stale": false, "ask": null,
+          "paths": { "dir": "/Users/pavlos/crew/useful-ai/crew-hud/surveyor" } } ] }
+  ]
+}
