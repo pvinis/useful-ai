@@ -41,6 +41,13 @@ the task matches.
   apart, waits for your go-ahead, then runs **hands** in isolated git worktrees
   and reports back with draft PRs. Roles, models, and effort levels are
   configurable; works across Claude Code and Codex in one crew.
+- [`skills/frontier/`](./skills/frontier) — Put a Claude on every takeable
+  ticket of a `/wayfinder` map, each pre-loaded in its own
+  [herdr](https://github.com/omacom-io/herdr) tab, so you walk between panes
+  instead of working the map one session at a time. Reads the frontier from the
+  repo's issue tracker, claims each ticket before spawning so reruns don't
+  duplicate, and keeps every session off the map body — the one field where
+  parallel writes silently overwrite each other.
 - [`skills/model-doctor/`](./skills/model-doctor) — Audit the AI model
   references in a repo or config directory, check them against official
   provider docs, and propose upgrades. Read-only by default: it reports what's

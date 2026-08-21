@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# frontier-spawn — put a Claude on each named wayfinder ticket, one herdr tab each.
+#
+# Usage: frontier-spawn <map-issue-number> <ticket-number>... [--dry-run]
+#
+# Per ticket: re-check it is still unclaimed, claim it, open a herdr tab named
+# wf-<n>, and start a Claude in it pre-loaded with /wayfinder for that ticket.
+# If the agent fails to start, the claim is released so the ticket returns to
+# the frontier rather than being silently parked.
+#
+# Claiming happens here, not inside the spawned session, so a second run of
+# this script re-scans to an already-claimed ticket and skips it instead of
+# opening a duplicate pane on work already in flight.
+
+set -euo pipefail
+
+die() { printf 'frontier-spawn: %s\n' "$*" >&2; exit 1; }
+
+[ $# -ge 2 ] || die "usage: frontier-spawn <map-issue-number> <ticket-number>... [--dry-run]"
+
+map=${1#\#}; shift
+dry=0
+tickets=()
+for a in "$@"; do
+  case "$a" in
+    --dry-run) dry=1 ;;
+    -*) die "unknown option: $a" ;;
+    *) tickets+=("${a#\#}") ;;
+  esac
+done
+[ ${#tickets[@]} -gt 0 ] || die "no ticket numbers given"
+
+[ "${HERDR_ENV:-}" = 1 ] || die "not running inside a herdr pane (HERDR_ENV != 1)"
+command -v gh >/dev/null 2>&1 || die "gh not found"
+command -v jq >/dev/null 2>&1 || die "jq not found"
+command -v herdr >/dev/null 2>&1 || die "herdr not found"
+
+trust=0
+live=$(herdr agent list | jq -r '.result.agents[]?.name // empty')
+
+for n in "${tickets[@]}"; do
+  name="wf-$n"
+
+  if grep -qx "$name" <<<"$live"; then
+    printf '%-6s %-10s already has a live agent — skipping\n' "#$n" "$name"
+    continue
+  fi
+
+  row=$(gh issue view "$n" --json number,title,state,assignees 2>/dev/null) \
+    || { printf '%-6s could not read issue — skipping\n' "#$n"; continue; }
+
+  title=$(jq -r '.title' <<<"$row")
+  state=$(jq -r '.state' <<<"$row")
+  claimed=$(jq -r '[.assignees[].login] | join(",")' <<<"$row")
+
+  if [ "$state" != "OPEN" ]; then
+    printf '%-6s %s — already %s, skipping\n' "#$n" "$title" "$state"
+    continue
+  fi
+  if [ -n "$claimed" ]; then
+    printf '%-6s %s — already claimed by %s, skipping\n' "#$n" "$title" "$claimed"
+    continue
+  fi
+
+  # The one rule that keeps parallel sessions safe: the map body is a single
+  # GitHub field and concurrent edits are last-write-wins, so a spawned session
+  # must never touch it. It reports its Decisions-so-far line instead.
+  prompt="/wayfinder Work the map in issue #$map, resolving ticket #$n only.
+The ticket is already assigned to me, so treat it as claimed and do not re-claim it.
+When you resolve it, post the answer as a resolution comment and close the ticket,
+but do NOT edit the map issue body: other tickets from this map are being worked in
+parallel right now, and concurrent edits to that one body overwrite each other.
+Instead, print the one-line Decisions-so-far entry you would have appended, and stop."
+
+  if [ "$dry" -eq 1 ]; then
+    printf '%-6s %-10s [dry-run] would claim, open tab, and start claude\n' "#$n" "$name"
+    continue
+  fi
+
+  gh issue edit "$n" --add-assignee @me >/dev/null
+
+  pane=$(herdr tab create --label "$name" --cwd "$PWD" --no-focus \
+         | jq -r '.result.root_pane.pane_id')
+  if [ -z "$pane" ] || [ "$pane" = "null" ]; then
+    gh issue edit "$n" --remove-assignee @me >/dev/null
+    printf '%-6s %-10s tab create failed — claim released\n' "#$n" "$name"
+    continue
+  fi
+
+  if herdr agent start "$name" --kind claude --pane "$pane" --timeout 60000 \
+       -- "$prompt" >/dev/null 2>&1; then
+    printf '%-6s %-10s %-8s %s\n' "#$n" "$name" "$pane" "$title"
+  elif herdr pane read "$pane" --source detection --lines 40 2>/dev/null \
+       | grep -q 'trust this folder'; then
+    # Claude opened on its folder-trust prompt. herdr reports that as
+    # agent_not_ready, but the session is alive and proceeds once the prompt is
+    # answered — so the claim stands and the tab stays.
+    printf '%-6s %-10s %-8s NEEDS TRUST PROMPT — accept it in this tab\n' \
+      "#$n" "$name" "$pane"
+    trust=1
+  else
+    gh issue edit "$n" --remove-assignee @me >/dev/null
+    herdr tab close "$(herdr pane get "$pane" | jq -r '.result.pane.tab_id')" >/dev/null 2>&1 || true
+    printf '%-6s %-10s %-8s agent start FAILED — claim released, tab closed\n' \
+      "#$n" "$name" "$pane"
+  fi
+done
+
+if [ "$trust" -eq 1 ]; then
+  printf '\none or more tabs are waiting on Claude'"'"'s folder-trust prompt; accept it there\nand the session picks up its ticket on its own.\n'
+fi
+
+printf '\ncheck on them with:  herdr agent list\n'
+printf 'walk into one with:  herdr agent focus wf-<n>\n'

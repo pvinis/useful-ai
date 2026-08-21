@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# frontier-scan — list the takeable tickets of a /wayfinder map on GitHub Issues.
+#
+# Usage: frontier-scan <map-issue-number> [-v]
+#
+# Prints one TSV row per frontier ticket: number <TAB> type <TAB> title.
+# A ticket is on the frontier when it is an OPEN sub-issue of the map, has no
+# assignee (unclaimed), and has no blocker that is still OPEN.
+#
+# With -v, every excluded ticket is reported on stderr with its reason, so a
+# short frontier is never mistaken for a small map.
+
+set -euo pipefail
+
+die() { printf 'frontier-scan: %s\n' "$*" >&2; exit 1; }
+
+[ $# -ge 1 ] || die "usage: frontier-scan <map-issue-number> [-v]"
+map=${1#\#}; shift
+verbose=0
+[ "${1:-}" = "-v" ] && verbose=1
+
+command -v gh >/dev/null 2>&1 || die "gh not found"
+command -v jq >/dev/null 2>&1 || die "jq not found"
+
+children=$(gh issue view "$map" --json subIssues \
+  -q '.subIssues.nodes[]? | select(.state=="OPEN") | .number' 2>/dev/null) \
+  || die "could not read sub-issues of #$map — is it a wayfinder map issue in this repo?"
+
+if [ -z "$children" ]; then
+  die "#$map has no open sub-issues. Either every ticket is closed, or sub-issues
+are not enabled here and the map uses the task-list fallback — see the repo's
+issue-tracker doc, 'Wayfinding operations'."
+fi
+
+found=0
+while read -r n; do
+  [ -n "$n" ] || continue
+  row=$(gh issue view "$n" --json number,title,assignees,blockedBy,labels)
+
+  title=$(jq -r '.title' <<<"$row")
+  type=$(jq -r '[.labels[].name
+                 | select(startswith("wayfinder:"))
+                 | ltrimstr("wayfinder:")]
+                | map(select(. != "map")) | first // "untyped"' <<<"$row")
+  claimed=$(jq -r '[.assignees[].login] | join(",")' <<<"$row")
+  blockers=$(jq -r '[.blockedBy.nodes[]?
+                     | select(.state=="OPEN")
+                     | "#\(.number // "?")"] | join(",")' <<<"$row")
+
+  if [ -n "$claimed" ]; then
+    if [ "$verbose" -eq 1 ]; then
+      printf 'skip #%s (claimed by %s): %s\n' "$n" "$claimed" "$title" >&2
+    fi
+    continue
+  fi
+  if [ -n "$blockers" ]; then
+    if [ "$verbose" -eq 1 ]; then
+      printf 'skip #%s (blocked by %s): %s\n' "$n" "$blockers" "$title" >&2
+    fi
+    continue
+  fi
+
+  printf '%s\t%s\t%s\n' "$n" "$type" "$title"
+  found=$((found + 1))
+done <<<"$children"
+
+if [ "$found" -eq 0 ]; then
+  printf 'frontier-scan: #%s has open tickets but none are takeable (all claimed or blocked). Re-run with -v for the reasons.\n' "$map" >&2
+fi
