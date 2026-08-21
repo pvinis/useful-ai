@@ -55,6 +55,13 @@ the task matches.
 - [`skills/trim-ios-simulator/`](./skills/trim-ios-simulator) — Clean up an iOS
   Simulator's home screen by uninstalling the apps you don't need, keeping only
   the ones relevant to your work. macOS + Xcode.
+- [`skills/whose-laptop-is-this/`](./skills/whose-laptop-is-this) — You found a
+  laptop and want to give it back. Run this **on that machine** and it hands you
+  a **return card**: who it belongs to, and every read-only way to reach them,
+  best first. Changes nothing, never enters a locked account, and gates every
+  read against what an *ordinary* account could see — so holding root changes
+  its behaviour nowhere. macOS, Windows, Linux, and a POSIX floor for everything
+  else.
 
 ## Data
 

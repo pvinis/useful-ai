@@ -1,0 +1,128 @@
+{
+  "fixture": "barren-windows",
+  "exercises": "nobody named — the stoplist floor, the serial in the box's second line, blank reach line, WHAT'S OUT OF REACH absent, the blank next-steps fork",
+  "os": "Windows 11 23H2",
+  "vantage": {
+    "kind": "in-session",
+    "account": "user",
+    "description": "the only account on the machine, signed in"
+  },
+  "machine": {
+    "name": "DESKTOP-7K2F9Q1",
+    "model": "Dell Latitude 5440",
+    "serial": "9BQ4XK3"
+  },
+  "election": {
+    "account": "user",
+    "reason": "sole human account",
+    "cascade_step": 1
+  },
+  "confidence": {
+    "election": "confirmed",
+    "name": null,
+    "shown": null,
+    "note": "election is confirmed by the sole-account rule; there is no name at all, so the verdict has no tier and the serial takes the box's second line."
+  },
+  "owner": {
+    "name": null,
+    "accounts": ["user"],
+    "stoplist_hit": "user"
+  },
+  "banner": null,
+  "channels": [],
+  "accounts": [
+    {
+      "user": "user",
+      "uid": "RID 1001",
+      "admin": true,
+      "real_name": null,
+      "real_name_note": "FullName blank",
+      "last_seen": "logged in now",
+      "state": "open",
+      "owner": true,
+      "signals": [
+        {
+          "field": "Microsoft account",
+          "value": "none — local account only",
+          "tier": "confirmed",
+          "family": "account-registration",
+          "source": "Get-LocalUser → PrincipalSource: Local"
+        },
+        {
+          "field": "OneDrive",
+          "value": "not configured",
+          "tier": "confirmed",
+          "family": "account-registration",
+          "source": "HKCU:\\Software\\Microsoft\\OneDrive\\Accounts"
+        }
+      ]
+    }
+  ],
+  "machine_signals": [
+    {
+      "field": "if-found message",
+      "value": "not set",
+      "tier": null,
+      "family": "owner-authored",
+      "source": "HKLM:\\…\\Policies\\System → legalnoticetext"
+    },
+    {
+      "field": "registered owner",
+      "value": "blank",
+      "tier": null,
+      "family": "inferred",
+      "source": "HKLM:\\…\\Windows NT\\CurrentVersion → RegisteredOwner"
+    },
+    {
+      "field": "last signed-in user",
+      "value": "blank — dontdisplaylastusername policy hides it",
+      "tier": null,
+      "family": "account-registration",
+      "source": "HKLM:\\…\\Authentication\\LogonUI"
+    },
+    {
+      "field": "work/school account",
+      "value": "not joined to any tenant",
+      "tier": "confirmed",
+      "family": "account-registration",
+      "source": "dsregcmd /status"
+    },
+    {
+      "field": "Find My Device",
+      "value": "off",
+      "tier": "strong",
+      "family": "inferred",
+      "source": "HKLM:\\…\\MdmCommon\\SettingValues → LocationSyncEnabled"
+    },
+    {
+      "field": "serial",
+      "value": "9BQ4XK3",
+      "tier": "strong",
+      "family": "inferred",
+      "source": "Get-CimInstance Win32_BIOS"
+    },
+    {
+      "field": "device name",
+      "value": "DESKTOP-7K2F9Q1 — OOBE default, names nobody",
+      "tier": "weak",
+      "family": "inferred",
+      "source": "(Get-CimInstance Win32_ComputerSystem).Name"
+    }
+  ],
+  "denied": [],
+  "find_my": {
+    "state": "off",
+    "os_supports": true
+  },
+  "expected": {
+    "reach_line": "blank, no channel at all",
+    "reach_predicate": "no channel reaches strong — reach line fires",
+    "out_of_reach_promoted": false,
+    "out_of_reach_note": "nothing was denied, so the section does not render at all. Its absence is the blank/shut-out tell.",
+    "enrichment_offered": false,
+    "enrichment_note": "the sendable set is empty — `user` is on the stoplist and is a bare local account username besides; DESKTOP-7K2F9Q1 is a hostname and an OOBE default. Nothing is sendable.",
+    "find_my_step": "absent — Find My is off. `Find My is off` is an evidence row, not a step.",
+    "footer": "6 signals · 1 account · read-only, nothing was changed",
+    "footer_note": "6 = the `--why` rows carrying a tier (Microsoft account, OneDrive, work/school account, Find My Device, serial, device name). The three unset fields are `○○○○` rows, not signals."
+  }
+}
