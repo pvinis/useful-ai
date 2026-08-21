@@ -1,0 +1,138 @@
+{
+  "fixture": "linux-locked",
+  "exercises": "locked-primary from a guest account — election certain, name a guess, the two confidences diverging, no channel, shut-out reach line, WHAT'S OUT OF REACH promoted",
+  "os": "Linux (Arch, SDDM greeter)",
+  "vantage": {
+    "kind": "cross-boundary",
+    "account": "guest",
+    "description": "a second/guest account — the owner's account is LOCKED and stays that way"
+  },
+  "machine": {
+    "name": "j-torres-x1",
+    "model": "Lenovo ThinkPad X1 Carbon Gen 11",
+    "serial": null,
+    "serial_note": "unreadable — /sys/class/dmi/id/product_serial is mode 0400, root-only"
+  },
+  "election": {
+    "account": "jtorres",
+    "reason": "first-created + admin, corroborated by the machine name",
+    "cascade_step": 2
+  },
+  "confidence": {
+    "election": "confirmed",
+    "name": "weak",
+    "shown": "weak",
+    "note": "the two diverge sharply — certain which account, guessing at the name. The verdict carries the weaker, which here means it names nobody."
+  },
+  "owner": {
+    "name": null,
+    "accounts": ["jtorres"]
+  },
+  "banner": null,
+  "channels": [],
+  "accounts": [
+    {
+      "user": "jtorres",
+      "uid": 1000,
+      "admin": true,
+      "real_name": null,
+      "real_name_note": "GECOS empty",
+      "last_seen": "today, 14:20",
+      "state": "locked",
+      "owner": true,
+      "signals": [
+        {
+          "field": "home dir",
+          "value": "/home/jtorres (mode 0700)",
+          "tier": "confirmed",
+          "family": "inferred",
+          "source": "ls -ld /home/*"
+        }
+      ]
+    },
+    {
+      "user": "guest",
+      "uid": 1001,
+      "admin": false,
+      "real_name": "Guest",
+      "last_seen": "logged in now (you)",
+      "state": "open",
+      "owner": false,
+      "signals": []
+    }
+  ],
+  "machine_signals": [
+    {
+      "field": "greeter last user",
+      "value": "jtorres",
+      "tier": "strong",
+      "family": "inferred",
+      "source": "/etc/sddm.conf.d/autologin.conf → User"
+    },
+    {
+      "field": "admin group",
+      "value": "jtorres is the only member of wheel",
+      "tier": "strong",
+      "family": "inferred",
+      "source": "getent group wheel"
+    },
+    {
+      "field": "hostname",
+      "value": "j-torres-x1 — encodes the same name",
+      "tier": "likely",
+      "family": "inferred",
+      "source": "hostnamectl"
+    },
+    {
+      "field": "if-found message",
+      "value": "none — no GDM banner, /etc/issue is the distro default",
+      "tier": null,
+      "family": "owner-authored",
+      "source": "gsettings … banner-message-text; /etc/issue"
+    },
+    {
+      "field": "asset tag",
+      "value": "“NO Asset Tag” — unset",
+      "tier": null,
+      "family": "owner-authored",
+      "source": "/sys/class/dmi/id/chassis_asset_tag"
+    },
+    {
+      "field": "hardware",
+      "value": "LENOVO ThinkPad X1 Carbon Gen 11",
+      "tier": "strong",
+      "family": "inferred",
+      "source": "/sys/class/dmi/id/sys_vendor, product_name"
+    }
+  ],
+  "denied": [
+    {
+      "what": "everything under /home/jtorres — git email, gh handle, mail accounts",
+      "path": "/home/jtorres",
+      "reason": "denied: /home/jtorres is mode 700 — no o+x, an ordinary principal cannot traverse it"
+    },
+    {
+      "what": "hardware serial",
+      "path": "/sys/class/dmi/id/product_serial",
+      "reason": "denied: /sys/devices/virtual/dmi/id/product_serial is mode 400 — no o+r, an ordinary principal cannot read it"
+    },
+    {
+      "what": "greeter last-user record",
+      "path": "/var/lib/sddm/state.conf",
+      "reason": "denied: /var/lib/sddm is mode 750 — no o+x, an ordinary principal cannot traverse it"
+    }
+  ],
+  "find_my": {
+    "state": null,
+    "os_supports": false
+  },
+  "expected": {
+    "reach_line": "shut-out, no channel at all",
+    "reach_predicate": "no channel reaches strong — reach line fires, WHAT'S OUT OF REACH promoted",
+    "out_of_reach_promoted": true,
+    "enrichment_offered": false,
+    "enrichment_note": "the sendable set is EMPTY — no full name, no email, no corroborated handle. `jtorres` is a bare local account username and `j-torres-x1` is a hostname; neither may be sent. The closed-door line takes the third next-step slot instead of the enrichment line.",
+    "footer": "5 signals · 2 accounts · read-only, nothing was changed",
+    "footer_note": "5 = the `--why` rows carrying a tier (greeter last user, admin group, hostname, hardware, home dir). The two absences — no if-found message, unset asset tag — are `○○○○` rows, not signals; counting them would inflate a card that reaches nobody."
+  }
+}

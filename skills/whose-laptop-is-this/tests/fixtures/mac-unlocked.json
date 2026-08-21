@@ -1,0 +1,165 @@
+{
+  "fixture": "mac-unlocked",
+  "exercises": "the rich path — banner present, a third party's phone ranked first, Apple ID confirmed, git identity likely, a TCC ✗ row, Find My on",
+  "os": "macOS 15.3 (Sequoia)",
+  "vantage": {
+    "kind": "in-session",
+    "account": "japple",
+    "description": "inside the owner's own unlocked account (japple)"
+  },
+  "machine": {
+    "name": "John's MacBook Pro",
+    "model": "MacBook Pro 14\" (M3, 2023)",
+    "serial": "C02XL0THJGH5"
+  },
+  "election": {
+    "account": "japple",
+    "reason": "first-created + admin",
+    "cascade_step": 2
+  },
+  "confidence": {
+    "election": "confirmed",
+    "name": "confirmed",
+    "shown": "confirmed"
+  },
+  "owner": {
+    "name": "John Appleseed",
+    "accounts": ["japple"]
+  },
+  "banner": {
+    "text": "Lost? Please call Marie on +1 415 555 0142, or email me — reward, no questions asked. — John",
+    "family": "owner-authored",
+    "tier": "confirmed",
+    "source": "defaults read /Library/Preferences/com.apple.loginwindow LoginwindowText"
+  },
+  "channels": [
+    {
+      "kind": "phone",
+      "value": "+1 415 555 0142",
+      "whose": "Marie",
+      "tier": "confirmed",
+      "family": "owner-authored",
+      "why": "the owner wrote it themselves, for exactly this",
+      "source": "lock-screen if-found message"
+    },
+    {
+      "kind": "email",
+      "value": "j.appleseed@icloud.com",
+      "whose": null,
+      "tier": "confirmed",
+      "family": "account-registration",
+      "why": "Apple ID signed in on this Mac",
+      "source": "defaults read ~/Library/Preferences/MobileMeAccounts → AccountID"
+    },
+    {
+      "kind": "email",
+      "value": "john@appleseed.dev",
+      "whose": null,
+      "tier": "likely",
+      "family": "app-config",
+      "why": "commits under it — monitored, but maybe not urgently",
+      "source": "git config --get user.email"
+    },
+    {
+      "kind": "handle",
+      "value": "github.com/jappleseed",
+      "whose": null,
+      "tier": "weak",
+      "family": "app-config",
+      "why": "public profile, slow channel",
+      "source": "~/.ssh/id_ed25519.pub comment"
+    }
+  ],
+  "accounts": [
+    {
+      "user": "japple",
+      "uid": 501,
+      "admin": true,
+      "real_name": "John Appleseed",
+      "last_seen": "logged in now",
+      "state": "open",
+      "owner": true,
+      "signals": [
+        {
+          "field": "Apple ID",
+          "value": "j.appleseed@icloud.com",
+          "tier": "confirmed",
+          "family": "account-registration",
+          "source": "MobileMeAccounts AccountID"
+        },
+        {
+          "field": "git identity",
+          "value": "John Appleseed <john@appleseed.dev>",
+          "tier": "likely",
+          "family": "app-config",
+          "source": "git config --get user.name/.email"
+        }
+      ]
+    },
+    {
+      "user": "sam",
+      "uid": 502,
+      "admin": false,
+      "real_name": "Sam Ortiz",
+      "last_seen": "3 months ago",
+      "state": "locked",
+      "owner": false,
+      "signals": []
+    }
+  ],
+  "machine_signals": [
+    {
+      "field": "if-found message",
+      "value": "set — see above",
+      "tier": "confirmed",
+      "family": "owner-authored",
+      "source": "defaults read …com.apple.loginwindow LoginwindowText"
+    },
+    {
+      "field": "device name",
+      "value": "John's MacBook Pro",
+      "tier": "strong",
+      "family": "inferred",
+      "source": "scutil --get ComputerName"
+    },
+    {
+      "field": "serial",
+      "value": "C02XL0THJGH5",
+      "tier": "strong",
+      "family": "inferred",
+      "source": "system_profiler SPHardwareDataType"
+    },
+    {
+      "field": "Activation Lock",
+      "value": "Enabled — Find My is on",
+      "tier": "strong",
+      "family": "inferred",
+      "source": "system_profiler SPHardwareDataType"
+    },
+    {
+      "field": "MDM enrollment",
+      "value": "none — personally owned",
+      "tier": "strong",
+      "family": "account-registration",
+      "source": "profiles status -type enrollment"
+    }
+  ],
+  "denied": [
+    {
+      "what": "Contacts \"me\" card",
+      "path": "~/Library/Application Support/AddressBook",
+      "reason": "TCC denied — needs Full Disk Access; skipped"
+    }
+  ],
+  "find_my": {
+    "state": "on",
+    "os_supports": true
+  },
+  "expected": {
+    "reach_line": null,
+    "reach_predicate": "a channel reaches strong — no reach line, no promoted WHAT'S OUT OF REACH, no enrichment offer",
+    "out_of_reach_promoted": false,
+    "enrichment_offered": false,
+    "footer": "7 signals · 2 accounts · read-only, nothing was changed"
+  }
+}
