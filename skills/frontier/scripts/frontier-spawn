@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# frontier-spawn — put a Claude on each named wayfinder ticket, one herdr tab each.
+# frontier-spawn — put a Claude on each named wayfinder ticket, one Orca worktree each.
 #
 # Usage: frontier-spawn <map-issue-number> <ticket-number>... [--dry-run]
 #
-# Per ticket: re-check it is still unclaimed, claim it, open a herdr tab named
-# wf-<n>, and start a Claude in it pre-loaded with /wayfinder for that ticket.
-# If the agent fails to start, the claim is released so the ticket returns to
-# the frontier rather than being silently parked.
+# Per ticket: re-check it is still unclaimed, claim it, and create an Orca
+# worktree named wf-<n> with a Claude already running in its first terminal,
+# pre-loaded with /wayfinder for that ticket. If the agent fails to start, the
+# claim is released and the worktree removed, so the ticket returns to the
+# frontier rather than being silently parked.
 #
 # Claiming happens here, not inside the spawned session, so a second run of
 # this script re-scans to an already-claimed ticket and skips it instead of
-# opening a duplicate pane on work already in flight.
+# creating a duplicate worktree for work already in flight.
 
 set -euo pipefail
 
@@ -30,19 +31,53 @@ for a in "$@"; do
 done
 [ ${#tickets[@]} -gt 0 ] || die "no ticket numbers given"
 
-[ "${HERDR_ENV:-}" = 1 ] || die "not running inside a herdr pane (HERDR_ENV != 1)"
 command -v gh >/dev/null 2>&1 || die "gh not found"
 command -v jq >/dev/null 2>&1 || die "jq not found"
-command -v herdr >/dev/null 2>&1 || die "herdr not found"
+
+# Resolve the Orca CLI once. Never fall back to bare `orca` on Linux outside an
+# Orca-managed terminal: there it is normally the GNOME screen reader and running
+# it starts speech on the user's machine.
+resolve_orca() {
+  if [ -n "${ORCA_CLI_COMMAND:-}" ]; then printf '%s' "$ORCA_CLI_COMMAND"; return; fi
+  if [ -n "${ORCA_DEV_REPO_ROOT:-}" ] && command -v orca-dev >/dev/null 2>&1; then
+    printf 'orca-dev'; return
+  fi
+  if [ "$(uname -s)" = "Linux" ]; then
+    command -v orca-ide >/dev/null 2>&1 \
+      || die "on Linux, set ORCA_CLI_COMMAND or install orca-ide; bare 'orca' is the GNOME screen reader"
+    printf 'orca-ide'; return
+  fi
+  command -v orca >/dev/null 2>&1 || die "orca not found"
+  printf 'orca'
+}
+ORCA=$(resolve_orca)
+
+"$ORCA" status --json >/dev/null 2>&1 \
+  || die "Orca is not reachable — start it with: $ORCA open --json"
+
+# Which repo do the new worktrees belong to? Prefer the enclosing Orca worktree;
+# fall back to matching this git checkout against the registered repos.
+repo=$("$ORCA" worktree current --json 2>/dev/null \
+       | jq -r '.result.worktree.repoId // empty' || true)
+if [ -z "$repo" ]; then
+  top=$(git rev-parse --show-toplevel 2>/dev/null) \
+    || die "not inside a git repo, and not inside an Orca worktree — cannot resolve the repo"
+  repo=$("$ORCA" repo list --json \
+         | jq -r --arg p "$top" '.result.repos[]? | select(.path==$p) | .id' | head -1)
+  [ -n "$repo" ] || die "repo at $top is not registered with Orca — add it with: $ORCA repo add --path $top --json"
+fi
+
+# `worktree ps` names the identifier worktreeId; `worktree list` names it id.
+# Match on displayName, which both agree on.
+live=$("$ORCA" worktree ps --json | jq -r '.result.worktrees[]?.displayName // empty')
 
 trust=0
-live=$(herdr agent list | jq -r '.result.agents[]?.name // empty')
 
 for n in "${tickets[@]}"; do
   name="wf-$n"
 
   if grep -qx "$name" <<<"$live"; then
-    printf '%-6s %-10s already has a live agent — skipping\n' "#$n" "$name"
+    printf '%-6s %-10s already has a worktree — skipping\n' "#$n" "$name"
     continue
   fi
 
@@ -63,52 +98,66 @@ for n in "${tickets[@]}"; do
   fi
 
   # The one rule that keeps parallel sessions safe: the map body is a single
-  # GitHub field and concurrent edits are last-write-wins, so a spawned session
-  # must never touch it. It reports its Decisions-so-far line instead.
+  # field, and a session that rewrites it can silently drop another session's
+  # Decisions-so-far line. So the spawned session reports that line instead of
+  # writing it. This is also why the prompt is not a bare "/wayfinder <ticket>":
+  # that would run wayfinder's normal resolution path, which ends in a map edit.
   prompt="/wayfinder Work the map in issue #$map, resolving ticket #$n only.
 The ticket is already assigned to me, so treat it as claimed and do not re-claim it.
 When you resolve it, post the answer as a resolution comment and close the ticket,
 but do NOT edit the map issue body: other tickets from this map are being worked in
-parallel right now, and concurrent edits to that one body overwrite each other.
-Instead, print the one-line Decisions-so-far entry you would have appended, and stop."
+parallel right now, and concurrent edits to that one body can overwrite each other.
+Instead, print the one-line Decisions-so-far entry you would have appended, and stop.
+Keep your workspace status current as you go with:
+  $ORCA worktree set --worktree active --comment \"<short progress note>\" --json"
 
   if [ "$dry" -eq 1 ]; then
-    printf '%-6s %-10s [dry-run] would claim, open tab, and start claude\n' "#$n" "$name"
+    printf '%-6s %-10s [dry-run] would claim and create a worktree running claude\n' "#$n" "$name"
     continue
   fi
 
   gh issue edit "$n" --add-assignee @me >/dev/null
 
-  pane=$(herdr tab create --label "$name" --cwd "$PWD" --no-focus \
-         | jq -r '.result.root_pane.pane_id')
-  if [ -z "$pane" ] || [ "$pane" = "null" ]; then
+  # --no-parent with no --base-branch: frontier tickets are independent of each
+  # other and of whatever branch we are standing on, so each branches from the
+  # repo default base rather than stacking on the current feature branch.
+  created=$("$ORCA" worktree create --repo "id:$repo" --name "$name" --no-parent \
+              --agent claude --prompt "$prompt" --json 2>/dev/null) || created=""
+
+  wid=""; handle=""; branch=""
+  if [ -n "$created" ]; then
+    wid=$(jq -r '.result.worktree.id // empty' <<<"$created")
+    handle=$(jq -r '.result.agentTerminalHandle // .result.startupTerminal.handle // empty' <<<"$created")
+    branch=$(jq -r '.result.worktree.git.branch // empty' <<<"$created")
+  fi
+
+  if [ -z "$wid" ]; then
     gh issue edit "$n" --remove-assignee @me >/dev/null
-    printf '%-6s %-10s tab create failed — claim released\n' "#$n" "$name"
+    printf '%-6s %-10s worktree create FAILED — claim released\n' "#$n" "$name"
     continue
   fi
 
-  if herdr agent start "$name" --kind claude --pane "$pane" --timeout 60000 \
-       -- "$prompt" >/dev/null 2>&1; then
-    printf '%-6s %-10s %-8s %s\n' "#$n" "$name" "$pane" "$title"
-  elif herdr pane read "$pane" --source detection --lines 40 2>/dev/null \
-       | grep -q 'trust this folder'; then
-    # Claude opened on its folder-trust prompt. herdr reports that as
-    # agent_not_ready, but the session is alive and proceeds once the prompt is
-    # answered — so the claim stands and the tab stays.
-    printf '%-6s %-10s %-8s NEEDS TRUST PROMPT — accept it in this tab\n' \
-      "#$n" "$name" "$pane"
-    trust=1
+  if [ -n "$handle" ]; then
+    # The agent has a terminal. Confirm it is actually moving rather than parked
+    # on Claude's folder-trust prompt, which a brand-new checkout can trigger.
+    tail_txt=$("$ORCA" terminal read --terminal "$handle" --json 2>/dev/null \
+               | jq -r '.result.terminal.tail[]? // empty' || true)
+    if grep -qi 'trust this folder\|do you trust' <<<"$tail_txt"; then
+      printf '%-6s %-10s NEEDS TRUST PROMPT — accept it in this workspace\n' "#$n" "$name"
+      trust=1
+    else
+      printf '%-6s %-10s %-40s %s\n' "#$n" "$name" "${branch#refs/heads/}" "$title"
+    fi
   else
+    "$ORCA" worktree rm --worktree "id:$wid" --force >/dev/null 2>&1 || true
     gh issue edit "$n" --remove-assignee @me >/dev/null
-    herdr tab close "$(herdr pane get "$pane" | jq -r '.result.pane.tab_id')" >/dev/null 2>&1 || true
-    printf '%-6s %-10s %-8s agent start FAILED — claim released, tab closed\n' \
-      "#$n" "$name" "$pane"
+    printf '%-6s %-10s agent start FAILED — claim released, worktree removed\n' "#$n" "$name"
   fi
 done
 
 if [ "$trust" -eq 1 ]; then
-  printf '\none or more tabs are waiting on Claude'"'"'s folder-trust prompt; accept it there\nand the session picks up its ticket on its own.\n'
+  printf '\none or more workspaces are waiting on Claude'"'"'s folder-trust prompt; accept it\nthere and the session picks up its ticket on its own.\n'
 fi
 
-printf '\ncheck on them with:  herdr agent list\n'
-printf 'walk into one with:  herdr agent focus wf-<n>\n'
+printf '\ncheck on them with:  %s worktree ps --json\n' "$ORCA"
+printf 'note: worktree ps reports status/liveTerminalCount; its agents array stays empty.\n'
